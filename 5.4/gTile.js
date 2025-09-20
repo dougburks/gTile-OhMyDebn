@@ -1776,31 +1776,37 @@ const enable = () => {
                     const colSpan = (args.length >= 5 && Number.isInteger(args[4]) && args[4] > 0) ? args[4] : 1;
                     const rowSpan = (args.length >= 6 && Number.isInteger(args[5]) && args[5] > 0) ? args[5] : 1;
 
-                    const win = app.FocusMetaWindow || global.display.focus_window;
+                    // Pick the focused window at the time of the DBus call to avoid stale references.
+                    const win = getFocusApp();
                     if (!win) {
                         invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", "No focused window");
                         return;
                     }
-                    const monitor = app.CurrentMonitor || imports.ui.main.layoutManager.primaryMonitor;
-                    const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
-
-                    const widthUnit = Math.floor(screenWidth / nbCols);
-                    const heightUnit = Math.floor(screenHeight / nbRows);
-
-                    const areaX = screenX + (colIndex * widthUnit);
-                    const areaY = screenY + (rowIndex * heightUnit);
-                    const areaWidth = widthUnit * colSpan;
-                    const areaHeight = heightUnit * rowSpan;
-
-                    platform.reset_window(win);
-                    platform.move_resize_window(win, areaX, areaY, areaWidth, areaHeight);
-
-                    invocation.return_value(GLib.Variant.new('()', []));
-                } catch (e) {
-                    invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", String(e));
-                }
-            }
-        };
+                    // Basic validation: ignore minimized or non-interesting windows to avoid accidental moves.
+                    if (win.minimized || !utils_Main.isInteresting(win)) {
+                        invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", "Focused window not movable");
+                        return;
+                    }
+                     const monitor = app.CurrentMonitor || imports.ui.main.layoutManager.primaryMonitor;
+                     const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
+ 
+                     const widthUnit = Math.floor(screenWidth / nbCols);
+                     const heightUnit = Math.floor(screenHeight / nbRows);
+ 
+                     const areaX = screenX + (colIndex * widthUnit);
+                     const areaY = screenY + (rowIndex * heightUnit);
+                     const areaWidth = widthUnit * colSpan;
+                     const areaHeight = heightUnit * rowSpan;
+ 
+                     platform.reset_window(win);
+                     platform.move_resize_window(win, areaX, areaY, areaWidth, areaHeight);
+ 
+                     invocation.return_value(GLib.Variant.new('()', []));
+                 } catch (e) {
+                     invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", String(e));
+                 }
+             }
+         };
 
         // register object on Cinnamon's session bus (Cinnamon process is the owner)
         // some GJS/GIO versions expect a function for method_call_closure instead of a vtable object
