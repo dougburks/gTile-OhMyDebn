@@ -1606,9 +1606,6 @@ const move_resize_window = (metaWindow, x, y, width, height) => {
     if (metaWindow == null)
         return;
 
-    // Mind the gap! use configured GAP_SIZE
-    const HALF_GAP = Math.floor(GAP_SIZE / 2);
-
     // Try to find the monitor that contains the target rectangle.
     // Fall back to primary monitor if none match.
     let monitor = null;
@@ -1644,6 +1641,7 @@ const move_resize_window = (metaWindow, x, y, width, height) => {
 
     // For sides that touch the usable area edge, keep the full GAP.
     // For internal sides (between two windows), use HALF_GAP on each window so the total gap is GAP_SIZE.
+    const HALF_GAP = Math.floor(GAP_SIZE / 2);
     let leftPadding = HALF_GAP;
     let rightPadding = HALF_GAP;
     let topPadding = HALF_GAP;
