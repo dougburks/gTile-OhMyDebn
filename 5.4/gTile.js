@@ -161,6 +161,12 @@ class Config {
                 this.app.platform.set_gap_size(Number(this.gapSize) || 10);
             }
         }, null);
+
+        // Ensure the platform has the initial gap value from settings at startup.
+        // The bindProperty callback may not be called immediately, so apply it now.
+        if (this.app && this.app.platform && typeof this.app.platform.set_gap_size === 'function') {
+            this.app.platform.set_gap_size(Number(this.gapSize) || 10);
+        }
     }
     get AnimationTime() {
         return this.animation ? 0.3 : 0.1;
