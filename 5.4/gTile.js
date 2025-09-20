@@ -1716,6 +1716,8 @@ const get_tab_list = () => {
 ;// CONCATENATED MODULE: ./extension.ts
 
     let monitorChangedSignal = null;
+let dbusRegistrationId = null; // <-- added
+let dbusOwnerId = null; // <-- new
 let extension_metadata;
 let app;
 const platform = {
@@ -1738,12 +1740,113 @@ const enable = () => {
             app.destroy();
             app = new App(platform);
         });
+
+    // --- DBus control export: allow external scripts to tile the focused window ---
+    try {
+        const Gio = imports.gi.Gio;
+        const IFACE_XML = `
+            <node>
+              <interface name="org.gTile.Control">
+                <method name="TileFocusedWindow">
+                  <arg type="i" name="cols" direction="in"/>
+                  <arg type="i" name="rows" direction="in"/>
+                  <arg type="i" name="colIndex" direction="in"/>
+                  <arg type="i" name="rowIndex" direction="in"/>
+                  <arg type="i" name="colSpan" direction="in"/>
+                  <arg type="i" name="rowSpan" direction="in"/>
+                </method>
+              </interface>
+            </node>`;
+        const nodeInfo = Gio.DBusNodeInfo.new_for_xml(IFACE_XML);
+        const ifaceInfo = nodeInfo.interfaces[0];
+
+        // Build a proper vtable object with a method_call function (don't use new Gio.DBusInterfaceVTable)
+        const vtable = {
+            method_call: function (connection, sender, objectPath, interfaceName, methodName, params, invocation) {
+                if (methodName !== 'TileFocusedWindow') {
+                    invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", "Unknown method");
+                    return;
+                }
+                try {
+                    const args = params.deep_unpack(); // [cols, rows, colIndex, rowIndex, colSpan?, rowSpan?]
+                    const nbCols = args[0];
+                    const nbRows = args[1];
+                    const colIndex = args[2];
+                    const rowIndex = args[3];
+                    const colSpan = (args.length >= 5 && Number.isInteger(args[4]) && args[4] > 0) ? args[4] : 1;
+                    const rowSpan = (args.length >= 6 && Number.isInteger(args[5]) && args[5] > 0) ? args[5] : 1;
+
+                    const win = app.FocusMetaWindow || global.display.focus_window;
+                    if (!win) {
+                        invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", "No focused window");
+                        return;
+                    }
+                    const monitor = app.CurrentMonitor || imports.ui.main.layoutManager.primaryMonitor;
+                    const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
+
+                    const widthUnit = Math.floor(screenWidth / nbCols);
+                    const heightUnit = Math.floor(screenHeight / nbRows);
+
+                    const areaX = screenX + (colIndex * widthUnit);
+                    const areaY = screenY + (rowIndex * heightUnit);
+                    const areaWidth = widthUnit * colSpan;
+                    const areaHeight = heightUnit * rowSpan;
+
+                    platform.reset_window(win);
+                    platform.move_resize_window(win, areaX, areaY, areaWidth, areaHeight);
+
+                    invocation.return_value(GLib.Variant.new('()', []));
+                } catch (e) {
+                    invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", String(e));
+                }
+            }
+        };
+
+        // register object on Cinnamon's session bus (Cinnamon process is the owner)
+        // some GJS/GIO versions expect a function for method_call_closure instead of a vtable object
+        dbusRegistrationId = Gio.DBus.session.register_object('/org/gTile/Control', ifaceInfo, vtable.method_call, null, null);
+
+        // request a well-known session bus name so external callers can target org.gTile.Control
+        try {
+            dbusOwnerId = Gio.bus_own_name(
+                Gio.BusType.SESSION,
+                'org.gTile.Control',
+                Gio.BusNameOwnerFlags.NONE,
+                (connection, name) => { global.log('gTile: D‑Bus acquired for ' + name); },
+                (connection, name) => { global.log('gTile: Acquired well-known name ' + name); },
+                (connection, name) => { global.log('gTile: Lost well-known name ' + name); }
+            );
+        } catch (e) {
+            global.log('gTile: bus_own_name not available: ' + e);
+        }
+    } catch (e) {
+        global.log('gTile: failed to register DBus control: ' + e);
+    }
 };
 const disable = () => {
         if (monitorChangedSignal) {
             // Main.layoutManager.disconnect(monitorChangedSignal);
             monitorChangedSignal = null;
         }
+    // unregister DBus object if registered
+    try {
+        if (dbusRegistrationId) {
+            const Gio = imports.gi.Gio;
+            Gio.DBus.session.unregister_object(dbusRegistrationId);
+            dbusRegistrationId = null;
+        }
+        if (dbusOwnerId) {
+            const Gio = imports.gi.Gio;
+            try {
+                Gio.bus_unown_name(dbusOwnerId);
+            } catch (e) {
+                global.log('gTile: bus_unown_name failed: ' + e);
+            }
+            dbusOwnerId = null;
+        }
+    } catch (e) {
+        global.log('gTile: failed to unregister DBus control: ' + e);
+    }
     app.destroy();
 };
 
