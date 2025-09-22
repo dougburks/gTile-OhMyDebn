@@ -1787,26 +1787,54 @@ const enable = () => {
                         invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", "Focused window not movable");
                         return;
                     }
-                     const monitor = app.CurrentMonitor || imports.ui.main.layoutManager.primaryMonitor;
-                     const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
- 
-                     const widthUnit = Math.floor(screenWidth / nbCols);
-                     const heightUnit = Math.floor(screenHeight / nbRows);
- 
-                     const areaX = screenX + (colIndex * widthUnit);
-                     const areaY = screenY + (rowIndex * heightUnit);
-                     const areaWidth = widthUnit * colSpan;
-                     const areaHeight = heightUnit * rowSpan;
- 
-                     platform.reset_window(win);
-                     platform.move_resize_window(win, areaX, areaY, areaWidth, areaHeight);
- 
-                     invocation.return_value(GLib.Variant.new('()', []));
-                 } catch (e) {
-                     invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", String(e));
-                 }
-             }
-         };
+
+                    // Determine the monitor that actually contains the focused window.
+                    // Prefer the window's reported monitor; fall back to find-by-position.
+                    let monitor = null;
+                    try {
+                        const lm = imports.ui.main.layoutManager;
+                        const monitors = lm.monitors;
+                        const winMonitorIndex = typeof win.get_monitor === 'function' ? win.get_monitor() : null;
+                        if (Number.isInteger(winMonitorIndex) && monitors[winMonitorIndex])
+                            monitor = monitors[winMonitorIndex];
+                        if (!monitor) {
+                            // fallback: pick monitor that contains the window center
+                            const rect = win.get_frame_rect();
+                            const centerX = Math.floor(rect.x + rect.width / 2);
+                            const centerY = Math.floor(rect.y + rect.height / 2);
+                            for (const m of monitors) {
+                                if (centerX >= m.x && centerX < (m.x + m.width) &&
+                                    centerY >= m.y && centerY < (m.y + m.height)) {
+                                    monitor = m;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!monitor)
+                            monitor = lm.primaryMonitor;
+                    } catch (e) {
+                        monitor = imports.ui.main.layoutManager.primaryMonitor;
+                    }
+
+                    const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
+
+                    const widthUnit = Math.floor(screenWidth / nbCols);
+                    const heightUnit = Math.floor(screenHeight / nbRows);
+
+                    const areaX = screenX + (colIndex * widthUnit);
+                    const areaY = screenY + (rowIndex * heightUnit);
+                    const areaWidth = widthUnit * colSpan;
+                    const areaHeight = heightUnit * rowSpan;
+
+                    platform.reset_window(win);
+                    platform.move_resize_window(win, areaX, areaY, areaWidth, areaHeight);
+
+                    invocation.return_value(GLib.Variant.new('()', []));
+                } catch (e) {
+                    invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", String(e));
+                }
+            }
+        };
 
         // register object on Cinnamon's session bus (Cinnamon process is the owner)
         // some GJS/GIO versions expect a function for method_call_closure instead of a vtable object
