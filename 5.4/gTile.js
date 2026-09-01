@@ -128,8 +128,8 @@ class Config {
         this.app = app;
         this.settings = new Settings.ExtensionSettings(this, 'gTile@OhMyDebn');
         this.settings.bindProperty(Settings.BindingDirection.IN, 'hotkey', 'hotkey', this.EnableHotkey, null);
-        this.settings.bindProperty(Settings.BindingDirection.OUT, 'lastGridRows', 'nbCols');
-        this.settings.bindProperty(Settings.BindingDirection.OUT, 'lastGridCols', 'nbRows');
+        this.settings.bindProperty(Settings.BindingDirection.OUT, 'lastGridCols', 'nbCols');
+        this.settings.bindProperty(Settings.BindingDirection.OUT, 'lastGridRows', 'nbRows');
         if (this.nbCols == null || !Array.isArray(this.nbCols))
             this.nbCols = this.InitialGridItems();
         if (this.nbRows == null || !Array.isArray(this.nbRows))
@@ -217,32 +217,267 @@ const getPanelHeight = (panel) => {
     return panel.height
         || panel.actor.get_height();
 };
-const getUsableScreenArea = (monitor) => {
+const getPanelWidth = (panel) => {
+    return panel.width
+        || panel.actor.get_width();
+};
+// Kept byte-for-byte in sync with the standalone 5.4/tile-rules.js in
+// this repo - see tests/check-sync.sh, which fails if these two copies
+// ever drift. Pure functions only: no imports.gi, no global.* - this
+// exact block is also loaded and unit-tested standalone via plain
+// `gjs`, with no live Cinnamon session, by tests/test-tile-rules.js.
+// BEGIN tile-rules.js
+function matchTileRule(wmClass, title, rules) {
+    for (const rule of rules) {
+        if (rule.wmClass !== wmClass) continue;
+        if (rule.titleRegex && !new RegExp(rule.titleRegex).test(title || '')) continue;
+        return rule.grid;
+    }
+    return null;
+}
+
+function computeGridRect(screenX, screenY, screenWidth, screenHeight, cols, rows, colIndex, rowIndex, colSpan, rowSpan) {
+    // Same "> 0 or fall back to 1" guard colSpan/rowSpan already get below -
+    // cols/rows come from the same untrusted places (tile-rules.json, the
+    // DBus control interface) and feed the same division; a 0 (or negative,
+    // or non-numeric) value here produces Infinity/NaN that flows straight
+    // into a native Meta window-resize call, which this session's own
+    // crash debugging established is not something a JS try/catch around
+    // the call site can protect against.
+    const widthUnit = Math.floor(screenWidth / (cols > 0 ? cols : 1));
+    const heightUnit = Math.floor(screenHeight / (rows > 0 ? rows : 1));
+    const areaX = screenX + (colIndex * widthUnit);
+    const areaY = screenY + (rowIndex * heightUnit);
+    const areaWidth = widthUnit * (colSpan > 0 ? colSpan : 1);
+    const areaHeight = heightUnit * (rowSpan > 0 ? rowSpan : 1);
+    return [areaX, areaY, areaWidth, areaHeight];
+}
+// END tile-rules.js
+
+// Kept byte-for-byte in sync with the standalone 5.4/traditional-tiling.js
+// in this repo - see tests/check-sync.sh, which fails if these two
+// copies ever drift. Pure logic only: no imports.gi, no global.* - this
+// exact block is also loaded and unit-tested standalone via plain
+// `gjs`, with no live Cinnamon session, by
+// tests/test-traditional-tiling.js.
+// BEGIN traditional-tiling.js
+// var, not const: this file's contents get eval()'d both by the test
+// runner and (once copied into gTile.js) inside the extension bundle -
+// eval() only leaks var/function declarations into the calling scope,
+// not const/let ones, so const here would silently vanish after eval.
+var TREE_FULL_REGION = { x: 0, y: 0, width: 1, height: 1 };
+
+function treeLeafDepth(leaf) {
+    let depth = 0;
+    let node = leaf;
+    while (node.parent) {
+        depth++;
+        node = node.parent;
+    }
+    return depth;
+}
+
+// Splits `leaf` into a new split node with two leaf children - `first`
+// keeps the existing window in the first half, `second` gets `newWindow`
+// in the second half. Axis alternates by the leaf's own current depth
+// (even depth = vertical/side-by-side, odd = horizontal/stacked) rather
+// than a separately-tracked counter, so it self-corrects after any
+// rebalance instead of needing to be kept in sync by hand. Does not
+// splice the new split node into the tree - the caller does that (the
+// two callers, treeInsert and a fresh-tree start, need it done
+// differently).
+function treeSplitLeaf(leaf, newWindow) {
+    const depth = treeLeafDepth(leaf);
+    const vertical = depth % 2 === 0;
+    const region = leaf.region;
+    let firstRegion, secondRegion;
+    if (vertical) {
+        const half = region.width / 2;
+        firstRegion = { x: region.x, y: region.y, width: half, height: region.height };
+        secondRegion = { x: region.x + half, y: region.y, width: half, height: region.height };
+    } else {
+        const half = region.height / 2;
+        firstRegion = { x: region.x, y: region.y, width: region.width, height: half };
+        secondRegion = { x: region.x, y: region.y + half, width: region.width, height: half };
+    }
+    const splitNode = { type: 'split', vertical: vertical, region: region, parent: leaf.parent, first: null, second: null };
+    // Mutate `leaf` in place instead of creating a new object for the
+    // pre-existing window's half. Any long-lived reference captured
+    // elsewhere - specifically the 'unmanaging' closure in gTile.js,
+    // which captures a leaf reference once at insert time for O(1)
+    // removal later - must keep tracking this window's CURRENT position
+    // for its entire lifetime in the tree, including through later
+    // splits. Creating a fresh object here left that captured reference
+    // pointing at an orphaned copy the instant a second window split it,
+    // which silently skipped that window's own rebalance-on-close AND
+    // (once a sibling's removal later looked up the *current* object and
+    // tried to move_resize_window the now-already-destroyed original
+    // window) crashed Cinnamon outright - confirmed by tracing the exact
+    // "open A, open B, close A, close B" repro against this code.
+    leaf.region = firstRegion;
+    leaf.parent = splitNode;
+    const secondLeaf = { type: 'leaf', window: newWindow, region: secondRegion, parent: splitNode };
+    splitNode.first = leaf;
+    splitNode.second = secondLeaf;
+    return { splitNode: splitNode, firstLeaf: leaf, secondLeaf: secondLeaf };
+}
+
+// state: { root, insertionLeaf, leafCount } - pass { root: null,
+// insertionLeaf: null, leafCount: 0 } for an empty/new tree. maxLeaves:
+// 3 for the capped mode, null (or any falsy value) for uncapped
+// "Traditional Full".
+//
+// Returns { root, insertionLeaf, leafCount, moves }. moves lists windows
+// that were ALREADY placed and need to physically move to make room
+// (just the one old window, when a split happens; empty when starting a
+// fresh tree, since nothing existing needs to move) - it does NOT
+// include newWindow itself, which the caller places via its own
+// hide-until-settled sequence instead, using the returned
+// insertionLeaf's region.
+function treeInsert(state, newWindow, maxLeaves) {
+    if (!state.root || (maxLeaves && state.leafCount >= maxLeaves)) {
+        const rootLeaf = { type: 'leaf', window: newWindow, region: TREE_FULL_REGION, parent: null };
+        return { root: rootLeaf, insertionLeaf: rootLeaf, leafCount: 1, moves: [] };
+    }
+    const split = treeSplitLeaf(state.insertionLeaf, newWindow);
+    if (split.splitNode.parent) {
+        if (split.splitNode.parent.first === state.insertionLeaf) {
+            split.splitNode.parent.first = split.splitNode;
+        } else {
+            split.splitNode.parent.second = split.splitNode;
+        }
+    }
+    const newRoot = split.splitNode.parent ? state.root : split.splitNode;
+    return {
+        root: newRoot,
+        insertionLeaf: split.secondLeaf,
+        leafCount: state.leafCount + 1,
+        moves: [{ window: split.firstLeaf.window, region: split.firstLeaf.region }],
+    };
+}
+
+// Removes `leaf` (the specific node reference captured when its window
+// was inserted - O(1), no tree search) from `state`'s tree: its sibling
+// absorbs the freed space, and every leaf in that sibling's subtree gets
+// its geometry re-derived and reported in `moves` - not just the direct
+// sibling, since collapsing an interior node can require repositioning
+// several windows at once (matches Hyprland's own dwindle behavior, not
+// an OhMyDebn-specific choice). Each split node's own stored
+// vertical/horizontal orientation is preserved through a collapse, not
+// recomputed from the sibling's new (shallower) depth - only regions
+// change.
+function treeRemove(state, leaf) {
+    if (!leaf.parent) {
+        return { root: null, insertionLeaf: null, leafCount: 0, moves: [] };
+    }
+    const parent = leaf.parent;
+    const sibling = parent.first === leaf ? parent.second : parent.first;
+    const grandparent = parent.parent;
+    sibling.parent = grandparent;
+    if (grandparent) {
+        if (grandparent.first === parent) {
+            grandparent.first = sibling;
+        } else {
+            grandparent.second = sibling;
+        }
+    }
+    const newRoot = grandparent ? state.root : sibling;
+
+    const moves = [];
+    const resize = (node, region) => {
+        node.region = region;
+        if (node.type === 'leaf') {
+            moves.push({ window: node.window, region: region });
+            return;
+        }
+        if (node.vertical) {
+            const half = region.width / 2;
+            resize(node.first, { x: region.x, y: region.y, width: half, height: region.height });
+            resize(node.second, { x: region.x + half, y: region.y, width: half, height: region.height });
+        } else {
+            const half = region.height / 2;
+            resize(node.first, { x: region.x, y: region.y, width: region.width, height: half });
+            resize(node.second, { x: region.x, y: region.y + half, width: region.width, height: half });
+        }
+    };
+    resize(sibling, parent.region);
+
+    let insertionLeaf = state.insertionLeaf;
+    if (insertionLeaf === leaf) {
+        let node = sibling;
+        while (node.type === 'split') {
+            node = node.second;
+        }
+        insertionLeaf = node;
+    }
+
+    return { root: newRoot, insertionLeaf: insertionLeaf, leafCount: state.leafCount - 1, moves: moves };
+}
+// END traditional-tiling.js
+
+// Kept byte-for-byte in sync with the standalone 5.4/screen-area.js in
+// this repo - see tests/check-sync.sh, which fails if these two copies
+// ever drift. Pure functions only: no imports.gi, no global.* - this
+// exact block is also loaded and unit-tested standalone via plain
+// `gjs`, with no live Cinnamon session, by tests/test-screen-area.js.
+// BEGIN screen-area.js
+function computeUsableArea(monitor, panels) {
     let top = monitor.y;
     let bottom = monitor.y + monitor.height;
     let left = monitor.x;
     let right = monitor.x + monitor.width;
-    for (let panel of utils_Main.panelManager.getPanelsInMonitor(monitor.index)) {
-        if (!panel.isHideable()) {
-            switch (panel.panelPosition) {
-                case Panel.PanelLoc.top:
-                    top += getPanelHeight(panel);
-                    break;
-                case Panel.PanelLoc.bottom:
-                    bottom -= getPanelHeight(panel);
-                    break;
-                case Panel.PanelLoc.left:
-                    left += getPanelHeight(panel);
-                    break;
-                case Panel.PanelLoc.right:
-                    right -= getPanelHeight(panel);
-                    break;
-            }
+    for (const panel of panels) {
+        if (panel.hideable) continue;
+        switch (panel.position) {
+            case 'top':
+                top += panel.size;
+                break;
+            case 'bottom':
+                bottom -= panel.size;
+                break;
+            case 'left':
+                left += panel.size;
+                break;
+            case 'right':
+                right -= panel.size;
+                break;
         }
     }
-    let width = right > left ? right - left : 0;
-    let height = bottom > top ? bottom - top : 0;
+    const width = right > left ? right - left : 0;
+    const height = bottom > top ? bottom - top : 0;
     return [left, top, width, height];
+}
+// END screen-area.js
+
+// Thin impure wrapper around computeUsableArea above - maps Cinnamon's
+// live Panel objects into the plain { position, size, hideable }
+// descriptors that pure function takes, then hands off the actual math
+// to it.
+const getUsableScreenArea = (monitor) => {
+    const panels = utils_Main.panelManager.getPanelsInMonitor(monitor.index).map((panel) => {
+        let position = null;
+        let size = 0;
+        switch (panel.panelPosition) {
+            case Panel.PanelLoc.top:
+                position = 'top';
+                size = getPanelHeight(panel);
+                break;
+            case Panel.PanelLoc.bottom:
+                position = 'bottom';
+                size = getPanelHeight(panel);
+                break;
+            case Panel.PanelLoc.left:
+                position = 'left';
+                size = getPanelWidth(panel);
+                break;
+            case Panel.PanelLoc.right:
+                position = 'right';
+                size = getPanelWidth(panel);
+                break;
+        }
+        return { position: position, size: size, hideable: panel.isHideable() };
+    });
+    return computeUsableArea(monitor, panels);
 };
 const getMonitorKey = (monitor) => {
     return monitor.x + ':' + monitor.width + ':' + monitor.y + ':' + monitor.height;
@@ -1671,8 +1906,35 @@ const move_resize_window = (metaWindow, x, y, width, height) => {
     if (width < 0) width = 0;
     if (height < 0) height = 0;
 
+    // move_resize_frame alone already sets both position and size in one
+    // call - a trailing move_frame(x, y) here was genuinely redundant for
+    // the final geometry (same x/y, already applied) and triggered a
+    // second, unnecessary geometry-negotiation call immediately after the
+    // first. Live-confirmed as the cause of a real bug: a window placed
+    // this way (e.g. by traditional-tiling's auto-placement), later
+    // native-maximized then restored via the titlebar button, came back
+    // smaller than its original size - with maximize-with-gaps off, so
+    // none of this extension's own code touches the window during that
+    // cycle; it's purely Mutter's own maximize/restore, meaning Mutter's
+    // internal saved_rect (captured at maximize time) didn't match what
+    // was actually on screen. Root-caused to this redundant second call
+    // rather than move_resize_frame itself - manually-resized windows
+    // (never touched by this function) restored exactly, every time.
     metaWindow.move_resize_frame(true, x, y, width, height);
-    metaWindow.move_frame(true, x, y);
+};
+// Same as move_resize_window, minus the gap padding - move_resize_window
+// always shrinks by at least HALF_GAP on every side (there's no
+// zero-padding path through it, by design - it exists for placing tiles
+// next to each other), which is wrong for restoring a window to an
+// exact previously-recorded rect (e.g. its pre-maximize floating
+// geometry): applying gap padding on top of a rect that's already the
+// right size makes the restored window smaller than it originally was.
+const move_resize_window_exact = (metaWindow, x, y, width, height) => {
+    if (metaWindow == null)
+        return;
+    // No trailing move_frame call here either - see move_resize_window's
+    // own comment on why that was removed.
+    metaWindow.move_resize_frame(true, x, y, width, height);
 };
 const get_window_center = (window) => {
     const pos_x = window.get_frame_rect().width / 2 + window.get_frame_rect().x;
@@ -1693,42 +1955,26 @@ const unsubscribe_from_focused_window_changes = (window, ...signals) => {
         window.disconnect(idx);
     }
 };
-const get_tab_list = () => {
-    let screen = global.screen;
-    let display = screen.get_display();
-    let workspace = screen.get_active_workspace();
-    let windows = [];
-    let allwindows = display.get_tab_list(utils_Meta.TabList.NORMAL_ALL, workspace);
-    let registry = {};
-    for (let i = 0; i < allwindows.length; ++i) {
-        let window = allwindows[i];
-        if (utils_Main_0.isInteresting(window)) {
-            let seqno = window.get_stable_sequence();
-            if (!registry[seqno]) {
-                windows.push(window);
-                registry[seqno] = true;
-            }
-        }
-    }
-    return windows;
-};
 
 ;// CONCATENATED MODULE: ./extension.ts
 
     let monitorChangedSignal = null;
 let dbusRegistrationId = null; // <-- added
 let dbusOwnerId = null; // <-- new
+let windowCreatedSignal = null; // <-- new: auto-tile on window-created
+let sizeChangeSignal = null; // <-- new: maximize-with-gaps (pre)
+let sizeChangedSignal = null; // <-- new: maximize-with-gaps (post)
 let extension_metadata;
 let app;
 const platform = {
     move_maximize_window: move_maximize_window,
     move_resize_window: move_resize_window,
+    move_resize_window_exact: move_resize_window_exact,
     set_gap_size: set_gap_size,
     reset_window: reset_window,
     get_window_center: get_window_center,
     subscribe_to_focused_window_changes: subscribe_to_focused_window_changes,
-    unsubscribe_from_focused_window_changes: unsubscribe_from_focused_window_changes,
-    get_tab_list: get_tab_list
+    unsubscribe_from_focused_window_changes: unsubscribe_from_focused_window_changes
 };
 const init = (meta) => {
     extension_metadata = meta;
@@ -1739,7 +1985,101 @@ const enable = () => {
         monitorChangedSignal = Main.layoutManager.connect('monitors-changed', () => {
             app.destroy();
             app = new App(platform);
+            // Per-monitor:workspace keys below would otherwise reference
+            // monitor indices that no longer mean anything once the set
+            // of monitors changes.
+            traditionalTilingState.clear();
+            traditionalFullState.clear();
+            pendingPreMaximizeRect.clear();
+            gapMaximizedState.clear();
+            nativeRestoreTarget.clear();
         });
+
+    // --- Auto-tile mode: a settings-panel combobox (see
+    // settings-schema.json's "tiling-mode" entry) with four values -
+    // "off" (nothing automatic, only the manual "Tile with gaps N"
+    // hotkeys), "rules" (tile-rules.json matching, the default),
+    // "traditional" (bypasses tile-rules.json entirely and sweeps every
+    // new window into a binary-tree dynamic-tiling cycle instead, capped
+    // at 3 windows), or "traditional-full" (the same tree, uncapped -
+    // see treeInsert/treeRemove above and their own comments for the
+    // tree itself). Bound onto its own small object rather than the App
+    // class, since this whole feature lives in the standalone
+    // window-created handler below, not inside App.
+    //
+    // maximize-with-gaps (see settings-schema.json's "maximize-with-gaps"
+    // entry) is an opt-in checkbox, independent of tiling-mode above -
+    // applies no matter which tiling mode is selected. Bound onto its own
+    // separate target object too, for the same reason.
+    //
+    // Both bound onto ONE shared ExtensionSettings instance via
+    // bindWithObject (not two separate `new Settings.ExtensionSettings(
+    // ..., 'gTile@OhMyDebn')` calls, one per target object) - live-
+    // confirmed on Cinnamon 6.6.9 that two ExtensionSettings instances
+    // for the SAME extension UUID silently collide:
+    // Main.settingsManager.register(uuid, instanceId, obj) stores
+    // exactly one object per (uuid, instanceId), so the second
+    // construction overwrites the first in that registry, and only the
+    // surviving (last-registered) instance ever receives live setting-
+    // changed updates afterward - the other is frozen at whatever value
+    // it had at construction time until the extension is fully reloaded.
+    // Confirmed live: on that Cinnamon version, changing "Automatic
+    // tiling" (bound via the first, orphaned instance) silently had no
+    // effect until a restart, while "Maximize with gaps" (bound via the
+    // second, surviving instance) worked immediately - swapping
+    // construction order moved which setting was affected, confirming
+    // the collision rather than a per-key issue. Not reproducible on
+    // every Cinnamon build (older ones have an additional per-instance
+    // file-watcher fallback that masks this exact collision), which is
+    // why this went unnoticed until tested on a Cinnamon version without
+    // it - but a single shared instance is correct regardless of which
+    // fallback a given Cinnamon build happens to have.
+    const tilingModeSettingsTarget = {};
+    const maximizeWithGapsSettingsTarget = {};
+    const gtileAutoTileSettings = new Settings.ExtensionSettings({}, 'gTile@OhMyDebn');
+    gtileAutoTileSettings.bindWithObject(tilingModeSettingsTarget, 'tiling-mode', 'mode', null, null);
+    gtileAutoTileSettings.bindWithObject(maximizeWithGapsSettingsTarget, 'maximize-with-gaps', 'enabled', null, null);
+
+    // Map from "monitorIndex:workspaceIndex" to a binary tiling tree's
+    // state ({ root, insertionLeaf, leafCount } - see treeInsert/
+    // treeRemove above) - independent tree per monitor+workspace pair,
+    // not one global tree. "Traditional tiling" (capped at 3 leaves) and
+    // "Traditional Full" (uncapped) share the exact same tree logic -
+    // only the maxLeaves argument passed to treeInsert differs - but
+    // keep separate Maps so switching between the two modes mid-session
+    // (no state reset on mode-switch, by design) can't let one mode's
+    // tree leak into the other's.
+    const traditionalTilingState = new Map();
+    const traditionalFullState = new Map();
+
+    // Maximize-with-gaps state (see the feature's own try block below
+    // for the full explanation): pendingPreMaximizeRect holds each
+    // window's rect from just before its current maximize transition
+    // (captured on 'size-change', consumed on 'size-changed');
+    // gapMaximizedState holds the rect to restore to for windows
+    // currently gap-maximized, so a second maximize trigger can be
+    // rerouted into a true restore instead of re-applying gaps.
+    const pendingPreMaximizeRect = new Map();
+    const gapMaximizedState = new Map();
+
+    // Native-maximize restore correction (independent of the
+    // maximize-with-gaps checkbox - see the feature's own try block
+    // below): windowId -> the rect captured just before ANY native
+    // maximize, tracked unconditionally. Live-confirmed (via debug
+    // logging, not guessed): Muffin's own unmaximize sometimes doesn't
+    // restore to the pre-maximize rect it itself correctly recorded -
+    // specifically when that rect is close enough to the full monitor
+    // area to look basically maximized already (exactly what
+    // tree-tiling's own small default gap produces for a single-window
+    // tile). A window resized to something clearly NOT maximized-looking
+    // (a normal manual resize, or a large gap) restores exactly; a
+    // near-full-screen one shrinks by a consistent ~8% on each axis on
+    // restore, even though Muffin's own oldFrameRect capture at maximize
+    // time was byte-for-byte correct. Since maximize-with-gaps handles
+    // its own restores via move_resize_window_exact already (never
+    // trusting Muffin's native restore to begin with), this only needs
+    // to run when that checkbox is off.
+    const nativeRestoreTarget = new Map();
 
     // --- DBus control export: allow external scripts to tile the focused window ---
     try {
@@ -1764,7 +2104,7 @@ const enable = () => {
         const vtable = {
             method_call: function (connection, sender, objectPath, interfaceName, methodName, params, invocation) {
                 if (methodName !== 'TileFocusedWindow') {
-                    invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", "Unknown method");
+                    invocation.return_dbus_error("org.gTile.Control.Error", "Unknown method");
                     return;
                 }
                 try {
@@ -1776,15 +2116,27 @@ const enable = () => {
                     const colSpan = (args.length >= 5 && Number.isInteger(args[4]) && args[4] > 0) ? args[4] : 1;
                     const rowSpan = (args.length >= 6 && Number.isInteger(args[5]) && args[5] > 0) ? args[5] : 1;
 
+                    // cols/rows feed a division below (screenWidth / nbCols)
+                    // - 0 (or negative) produces Infinity/NaN geometry that
+                    // flows straight into a native Meta window-resize call,
+                    // which this session's own crash debugging established
+                    // is not something a JS try/catch can protect against.
+                    // colSpan/rowSpan already get this same guard a few
+                    // lines up; cols/rows/colIndex/rowIndex didn't.
+                    if (nbCols <= 0 || nbRows <= 0 || colIndex < 0 || rowIndex < 0) {
+                        invocation.return_dbus_error("org.gTile.Control.Error", "Invalid grid arguments");
+                        return;
+                    }
+
                     // Pick the focused window at the time of the DBus call to avoid stale references.
                     const win = getFocusApp();
                     if (!win) {
-                        invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", "No focused window");
+                        invocation.return_dbus_error("org.gTile.Control.Error", "No focused window");
                         return;
                     }
                     // Basic validation: ignore minimized or non-interesting windows to avoid accidental moves.
                     if (win.minimized || !utils_Main.isInteresting(win)) {
-                        invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", "Focused window not movable");
+                        invocation.return_dbus_error("org.gTile.Control.Error", "Focused window not movable");
                         return;
                     }
 
@@ -1831,7 +2183,7 @@ const enable = () => {
 
                     invocation.return_value(GLib.Variant.new('()', []));
                 } catch (e) {
-                    invocation.return_dbus_error_literal(null, "org.gTile.Control.Error", String(e));
+                    invocation.return_dbus_error("org.gTile.Control.Error", String(e));
                 }
             }
         };
@@ -1846,7 +2198,7 @@ const enable = () => {
                 Gio.BusType.SESSION,
                 'org.gTile.Control',
                 Gio.BusNameOwnerFlags.NONE,
-                (connection, name) => { global.log('gTile: D‑Bus acquired for ' + name); },
+                (connection, name) => { global.log('gTile: D-Bus acquired for ' + name); },
                 (connection, name) => { global.log('gTile: Acquired well-known name ' + name); },
                 (connection, name) => { global.log('gTile: Lost well-known name ' + name); }
             );
@@ -1856,12 +2208,483 @@ const enable = () => {
     } catch (e) {
         global.log('gTile: failed to register DBus control: ' + e);
     }
+
+    // --- Auto-tile on window-created: rule-table driven tiling for
+    // OhMyDebn app launchers, replacing the *-tiled wrapper scripts that
+    // used to poll for a launched window from outside the WM (PID
+    // polling, active-window polling, an opacity-hide dance to mask the
+    // gap). window-created fires with the real Meta.Window at map time,
+    // before first paint, so there's nothing to hide - by the time this
+    // runs the window hasn't been shown yet.
+    //
+    // The rule table is external, OhMyDebn-owned JSON (TILE_RULES_PATH
+    // below) - this extension has no idea what OhMyDebn is and must keep
+    // working normally (i.e. do nothing extra) if that file is missing,
+    // unreadable, or not valid JSON. Never treat a rule-table problem as
+    // an error: catch broadly and fall back to "no rules" rather than
+    // breaking window creation for everyone.
+    try {
+        const TILE_RULES_PATH = '/usr/share/ohmydebn/config/tile-rules.json';
+
+        const loadTileRules = () => {
+            try {
+                const file = imports.gi.Gio.File.new_for_path(TILE_RULES_PATH);
+                const [ok, contents] = file.load_contents(null);
+                if (!ok) return [];
+                const parsed = JSON.parse(imports.byteArray.toString(contents));
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                return [];
+            }
+        };
+
+        // global.display.get_current_monitor() (Mutter's own "which
+        // monitor has the pointer" tracking, the same signal its own
+        // native new-window placement uses) comes FIRST here, not
+        // win.get_monitor() - window-created fires before a brand-new
+        // window's monitor assignment is settled, and live debug logging
+        // proved win.get_monitor() doesn't report something obviously
+        // invalid at this point the way a null/undefined check could
+        // catch - it reports an already-valid-looking but WRONG value
+        // (silently defaulting to the primary monitor's index), so a
+        // "prefer win.get_monitor(), fall back to get_current_monitor()"
+        // order never actually reached the fallback: the first check
+        // always "succeeded" with the wrong answer, unconditionally
+        // sending every auto-tiled window to the primary monitor
+        // regardless of which one the cursor was actually on - confirmed
+        // live. (TileFocusedWindow above is a different situation - it
+        // only ever acts on an already-mapped, already-settled window,
+        // where win.get_monitor() genuinely is reliable.) primaryMonitor
+        // stays as the final fallback if even get_current_monitor()
+        // comes back invalid.
+        const resolveMonitor = (win) => {
+            const lm = imports.ui.main.layoutManager;
+            try {
+                const currentMonitorIndex = global.display.get_current_monitor();
+                if (Number.isInteger(currentMonitorIndex) && lm.monitors[currentMonitorIndex])
+                    return lm.monitors[currentMonitorIndex];
+            } catch (e) {
+                global.log('gTile: resolveMonitor get_current_monitor failed: ' + e);
+            }
+            const winMonitorIndex = typeof win.get_monitor === 'function' ? win.get_monitor() : null;
+            if (Number.isInteger(winMonitorIndex) && lm.monitors[winMonitorIndex])
+                return lm.monitors[winMonitorIndex];
+            return lm.primaryMonitor;
+        };
+
+        // window-created fires before Mutter/Muffin's own initial-
+        // placement logic has run, so moving a *new* window immediately
+        // here gets silently overwritten a moment later by that
+        // placement (confirmed live: the grid math was correct, the
+        // window still ended up unplaced). Deferring the move to the
+        // compositor actor's first-frame signal fixes the overwrite, but
+        // first-frame itself turned out to already be visible to the
+        // user (confirmed live: "starts in one position, then moves") -
+        // same flash this whole redesign exists to remove, just
+        // relocated to a different signal.
+        //
+        // Fix: stop trying to win the exact timing race and hide the
+        // window instead, the same way the old bash-based
+        // ohmydebn-gtile-hide/-apply already did reliably (see
+        // OhMyDebn's own bin/ohmydebn-gtile-apply) - except here via the
+        // compositor actor's own Clutter opacity property directly,
+        // since this code already runs inside the compositor process,
+        // rather than round-tripping through an external
+        // _NET_WM_WINDOW_OPACITY xprop call. Hidden for the whole
+        // hide -> wait for first-frame -> move -> brief settle -> reveal
+        // sequence, so the exact instant Mutter's own placement finishes
+        // stops mattering - the user never sees any of it happen.
+        //
+        // Only for a *new* window (called from window-created, before
+        // it's ever been shown). An *already-visible* window being
+        // repositioned - the traditional-tiling cycle's "move the last
+        // window to make room" step - skips this entirely and just
+        // calls platform.move_resize_window directly: it's already been
+        // painted, so there's no "before first paint" moment left to
+        // hide it until, and seeing it move is the expected, real
+        // tiling-WM behavior in that case, not the flash bug this hide/
+        // reveal dance exists to prevent.
+        const hideNewWindowThenPlace = (win, areaX, areaY, areaWidth, areaHeight) => {
+            const applyTileThenReveal = (actor) => {
+                try {
+                    platform.reset_window(win);
+                    platform.move_resize_window(win, areaX, areaY, areaWidth, areaHeight);
+                } catch (e) {
+                    global.log('gTile: auto-tile apply failed: ' + e);
+                }
+                // Same settle delay ohmydebn-gtile-apply already uses
+                // after its own gdbus tile call, to outlast Cinnamon's
+                // resize/move animation before revealing.
+                imports.gi.GLib.timeout_add(imports.gi.GLib.PRIORITY_DEFAULT, 150, () => {
+                    try {
+                        actor.opacity = 255;
+                    } catch (e) {
+                        global.log('gTile: auto-tile reveal failed: ' + e);
+                    }
+                    return imports.gi.GLib.SOURCE_REMOVE;
+                });
+            };
+
+            const hideThenWaitForFirstFrame = (actor) => {
+                actor.opacity = 0;
+                const firstFrameId = actor.connect('first-frame', () => {
+                    actor.disconnect(firstFrameId);
+                    applyTileThenReveal(actor);
+                });
+            };
+
+            const actorNow = win.get_compositor_private();
+            if (actorNow) {
+                hideThenWaitForFirstFrame(actorNow);
+            } else {
+                // The compositor actor isn't created yet at
+                // window-created time (uncommon but not guaranteed
+                // otherwise) - poll on idle until it exists, hiding it
+                // the instant it does, same as above.
+                imports.gi.GLib.idle_add(imports.gi.GLib.PRIORITY_DEFAULT, () => {
+                    const actor = win.get_compositor_private();
+                    if (actor) {
+                        hideThenWaitForFirstFrame(actor);
+                        return imports.gi.GLib.SOURCE_REMOVE;
+                    }
+                    return imports.gi.GLib.SOURCE_CONTINUE;
+                });
+            }
+        };
+
+        // Shared window-created handler for both dynamic-tiling modes -
+        // see treeInsert/treeRemove above for the tree logic itself; this
+        // is just the thin Meta-touching layer that applies whatever they
+        // decide. maxLeaves: 3 for "Traditional tiling" (capped), null
+        // for "Traditional Full" (uncapped) - the only difference between
+        // the two modes, since they share the exact same tree.
+        const handleTreeTilingWindowCreated = (win, stateMap, maxLeaves) => {
+            const monitor = resolveMonitor(win);
+            const monitorIndex = typeof monitor.index === 'number' ? monitor.index : 0;
+            // win.get_workspace() crashed Cinnamon outright on the very
+            // first window of a session (confirmed live: "no windows,
+            // press Super+Return" -> mutter:ERROR:...
+            // meta_window_get_workspaces: code should not be reached,
+            // a native g_error() abort, not a catchable JS exception - a
+            // brand new window's own workspace assignment isn't settled
+            // yet at window-created time, same class of "not everything
+            // is initialized yet" issue resolveMonitor above already has
+            // a documented fallback for on the monitor side). Asking the
+            // workspace manager for the currently active workspace
+            // instead sidesteps that call path entirely, and is exactly
+            // where a brand new window ends up in normal use anyway.
+            let workspaceIndex = 0;
+            try {
+                const activeWorkspace = global.workspace_manager.get_active_workspace();
+                if (activeWorkspace && typeof activeWorkspace.index === 'function') {
+                    workspaceIndex = activeWorkspace.index();
+                }
+            } catch (e) {
+                global.log('gTile: tree-tiling active-workspace lookup failed: ' + e);
+            }
+            const key = monitorIndex + ':' + workspaceIndex;
+
+            const prevState = stateMap.get(key) || { root: null, insertionLeaf: null, leafCount: 0 };
+            const result = treeInsert(prevState, win, maxLeaves);
+            stateMap.set(key, { root: result.root, insertionLeaf: result.insertionLeaf, leafCount: result.leafCount });
+
+            const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
+            const rectForRegion = (region) => [
+                screenX + region.x * screenWidth,
+                screenY + region.y * screenHeight,
+                region.width * screenWidth,
+                region.height * screenHeight,
+            ];
+            const applyMove = (move, logPrefix) => {
+                try {
+                    const [x, y, w, h] = rectForRegion(move.region);
+                    platform.reset_window(move.window);
+                    platform.move_resize_window(move.window, x, y, w, h);
+                } catch (e) {
+                    global.log('gTile: ' + logPrefix + ' failed: ' + e);
+                }
+            };
+
+            // Windows that were already placed and need to move to make
+            // room - already visible, so a direct move each, no
+            // hide/reveal dance (see hideNewWindowThenPlace's own comment
+            // on why that's fine here).
+            for (const move of result.moves) {
+                applyMove(move, 'tree-tiling move');
+            }
+
+            const [areaX, areaY, areaWidth, areaHeight] = rectForRegion(result.insertionLeaf.region);
+            hideNewWindowThenPlace(win, areaX, areaY, areaWidth, areaHeight);
+
+            // 'unmanaging' (fires before destruction, object identity
+            // still valid - unlike 'unmanaged', which fires after)
+            // triggers a real rebalance: this window's sibling (and
+            // everything below it) reclaims the freed space - see
+            // treeRemove's own comment. ownLeaf is captured here (not
+            // searched for later) for O(1) removal.
+            //
+            // The actual rebalance (tree update + moving sibling windows)
+            // is deferred to the next main-loop iteration via
+            // GLib.idle_add, not run synchronously inside this callback -
+            // confirmed live as necessary: calling move_resize_window on
+            // a *different* (sibling) window from directly inside one
+            // window's own 'unmanaging' handler crashed Cinnamon outright
+            // (mutter:ERROR:...meta_window_get_workspaces: code should
+            // not be reached, a native g_error() abort) after closing
+            // several windows in a row. 'unmanaging' fires as part of
+            // Mutter's own internal window-removal bookkeeping - a
+            // geometry operation on another window while that's still
+            // mid-flight is reentrant in a way Mutter doesn't expect.
+            // Deferring lets that bookkeeping finish first. idle_add
+            // callbacks run strictly in the order they were scheduled (a
+            // single-threaded main loop), so this stays correct even if
+            // several windows are closed in rapid succession - each
+            // deferred removal reads stateMap fresh when it actually
+            // runs, already reflecting any earlier deferred removal that
+            // ran first.
+            const ownLeaf = result.insertionLeaf;
+            try {
+                win.connect('unmanaging', () => {
+                    imports.gi.GLib.idle_add(imports.gi.GLib.PRIORITY_DEFAULT, () => {
+                        const current = stateMap.get(key);
+                        if (!current || !current.root) return imports.gi.GLib.SOURCE_REMOVE;
+                        // If the capped mode discarded and restarted the
+                        // tree since this window was inserted, ownLeaf
+                        // belongs to an abandoned tree, not the current
+                        // live one - this window was already orphaned/
+                        // covered (same as today's shipped "window 4
+                        // covers whatever's there" behavior), so leave the
+                        // current tree alone rather than splicing into
+                        // the wrong structure.
+                        let ownRoot = ownLeaf;
+                        while (ownRoot.parent) {
+                            ownRoot = ownRoot.parent;
+                        }
+                        if (ownRoot !== current.root) return imports.gi.GLib.SOURCE_REMOVE;
+
+                        const removal = treeRemove(current, ownLeaf);
+                        stateMap.set(key, { root: removal.root, insertionLeaf: removal.insertionLeaf, leafCount: removal.leafCount });
+                        for (const move of removal.moves) {
+                            applyMove(move, 'tree-tiling rebalance move');
+                        }
+                        return imports.gi.GLib.SOURCE_REMOVE;
+                    });
+                });
+            } catch (e) {
+                global.log('gTile: tree-tiling unmanaging hook failed: ' + e);
+            }
+        };
+
+        windowCreatedSignal = global.display.connect('window-created', (display, win) => {
+            try {
+                if (!win || win.minimized || !utils_Main.isInteresting(win)) return;
+
+                // "off": nothing automatic. "traditional"/"traditional-full":
+                // one of the two dynamic cycles. "rules": rule-table
+                // matching below. Anything else - including unset/
+                // unrecognized, e.g. before the settings binding's first
+                // read completes - does nothing, same as "off": that's
+                // the schema's own default, so treating an unknown value
+                // the same way is the safe choice, not an arbitrary one.
+                if (tilingModeSettingsTarget.mode === 'traditional') {
+                    handleTreeTilingWindowCreated(win, traditionalTilingState, 3);
+                    return;
+                }
+                if (tilingModeSettingsTarget.mode === 'traditional-full') {
+                    handleTreeTilingWindowCreated(win, traditionalFullState, null);
+                    return;
+                }
+                if (tilingModeSettingsTarget.mode !== 'rules') return;
+
+                const grid = matchTileRule(win.get_wm_class(), win.get_title(), loadTileRules());
+                if (!grid || grid.length < 4) return;
+                const [cols, rows, colIndex, rowIndex, colSpanRaw, rowSpanRaw] = grid;
+                const colSpan = (Number.isInteger(colSpanRaw) && colSpanRaw > 0) ? colSpanRaw : 1;
+                const rowSpan = (Number.isInteger(rowSpanRaw) && rowSpanRaw > 0) ? rowSpanRaw : 1;
+
+                const monitor = resolveMonitor(win);
+                const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
+                const [areaX, areaY, areaWidth, areaHeight] =
+                    computeGridRect(screenX, screenY, screenWidth, screenHeight, cols, rows, colIndex, rowIndex, colSpan, rowSpan);
+
+                hideNewWindowThenPlace(win, areaX, areaY, areaWidth, areaHeight);
+            } catch (e) {
+                global.log('gTile: auto-tile window-created handler failed: ' + e);
+            }
+        });
+    } catch (e) {
+        global.log('gTile: failed to connect window-created for auto-tile: ' + e);
+    }
+
+    // --- Maximize-with-gaps: intercept every native maximize trigger
+    // (titlebar button / OhMyDebn's own Super+PageUp rebind of Cinnamon's
+    // toggle-maximized wm action / double-click-titlebar) and substitute
+    // a gapped rect for the true edge-to-edge maximize.
+    //
+    // Muffin's own constraint solver (constrain_maximization in
+    // constraints.c) unconditionally re-snaps ANY move_resize_frame/
+    // move_frame call back to the full monitor work area for as long as
+    // a window's maximized_horizontally/vertically flags stay true -
+    // confirmed by reading Muffin's window.c/constraints.c source, and
+    // independently corroborated against a real published GNOME Shell
+    // extension that does this exact feature. There is no way to keep
+    // Meta's own "maximized" flag AND show custom (gapped) geometry at
+    // the same time - the only way out is to call unmaximize() ourselves
+    // once Mutter's own maximize transition has settled, then resize to
+    // the gapped rect, which means Meta itself no longer considers the
+    // window maximized afterward (get_maximized() reports NONE) - the
+    // native maximize/restore button can't be relied on for the toggle
+    // anymore. To still give the user a working maximize<->restore
+    // toggle, this tracks its own per-window state (pendingPreMaximizeRect/
+    // gapMaximizedState above) and reroutes a SECOND maximize trigger on
+    // an already gap-maximized window into a true restore to its
+    // original pre-maximize rect, instead of re-applying gaps.
+    try {
+        const isMaximizeTransition = (win, whichChange) => {
+            if (whichChange === Meta.SizeChange.MAXIMIZE) return true;
+            // Defensive only, confirmed NOT reachable via ordinary
+            // edge-drag-to-top on this Cinnamon/Muffin (live-tested:
+            // dragging to the top edge produces a plain top-half tile,
+            // not a maximize) - Meta.TileMode has a genuinely separate
+            // TOP=7 distinct from MAXIMIZED=9 (confirmed via the actual
+            // installed Meta typelib), and Cinnamon reserves MAXIMIZED
+            // for explicit actions (button/keybinding/double-click), not
+            // implicit edge-drag zones the way GNOME Shell/Windows Aero
+            // Snap do. Kept anyway in case some other path (a different
+            // Cinnamon version, a future gesture) ever does reach
+            // meta_window_tile(window, META_TILE_MAXIMIZED) - harmless
+            // if it never fires.
+            if (whichChange === Meta.SizeChange.TILE &&
+                typeof win.tile_mode !== 'undefined' &&
+                win.tile_mode === Meta.TileMode.MAXIMIZED) return true;
+            return false;
+        };
+
+        sizeChangeSignal = global.window_manager.connect('size-change', (wm, actor, whichChange, oldFrameRect, oldBufferRect) => {
+            try {
+                const win = actor && actor.meta_window;
+                if (!win) return;
+                if (typeof win.get_window_type === 'function' && win.get_window_type() !== Meta.WindowType.NORMAL) return;
+                if (!isMaximizeTransition(win, whichChange)) return;
+                if (typeof win.can_maximize === 'function' && !win.can_maximize()) return;
+
+                const rect = {
+                    x: oldFrameRect.x, y: oldFrameRect.y,
+                    width: oldFrameRect.width, height: oldFrameRect.height,
+                };
+                // Unconditional - see nativeRestoreTarget's own comment
+                // above. Independent of the maximize-with-gaps checkbox.
+                nativeRestoreTarget.set(win.get_id(), rect);
+                if (maximizeWithGapsSettingsTarget.enabled) {
+                    pendingPreMaximizeRect.set(win.get_id(), rect);
+                }
+            } catch (e) {
+                global.log('gTile: maximize-with-gaps size-change handler failed: ' + e);
+            }
+        });
+
+        sizeChangedSignal = global.window_manager.connect('size-changed', (wm, actor) => {
+            try {
+                const win = actor && actor.meta_window;
+                if (!win) return;
+                const id = win.get_id();
+
+                if (!maximizeWithGapsSettingsTarget.enabled) {
+                    // Native-maximize restore correction - see
+                    // nativeRestoreTarget's own comment above. Only a
+                    // completed unmaximize (get_maximized() back to 0)
+                    // is relevant; nativeRestoreTarget.has(id) already
+                    // scopes this to a window that was actually
+                    // maximized moments ago, not just any size-changed.
+                    if (win.get_maximized() === 0 && nativeRestoreTarget.has(id)) {
+                        const target = nativeRestoreTarget.get(id);
+                        nativeRestoreTarget.delete(id);
+                        const r = win.get_frame_rect();
+                        if (r.x !== target.x || r.y !== target.y || r.width !== target.width || r.height !== target.height) {
+                            platform.move_resize_window_exact(win, target.x, target.y, target.width, target.height);
+                        }
+                    }
+                    return;
+                }
+                if (!pendingPreMaximizeRect.has(id)) return;
+                const preRect = pendingPreMaximizeRect.get(id);
+                pendingPreMaximizeRect.delete(id);
+
+                // Only a genuine full (both-direction) maximize - a
+                // partial/vertical-only maximize is left untouched.
+                if (win.get_maximized() !== (Meta.MaximizeFlags.HORIZONTAL | Meta.MaximizeFlags.VERTICAL)) return;
+
+                if (gapMaximizedState.has(id)) {
+                    // Second trigger on an already gap-maximized window:
+                    // Meta thinks this is a fresh maximize (its own flag
+                    // was cleared by our own unmaximize() below last
+                    // time) - re-route into a true restore to the
+                    // ORIGINAL pre-maximize rect instead of re-gapping.
+                    const restoreRect = gapMaximizedState.get(id);
+                    gapMaximizedState.delete(id);
+                    platform.reset_window(win);
+                    // _exact_, not move_resize_window - restoreRect is
+                    // already the window's original size; move_resize_window
+                    // would shrink it further by the gap on top of that.
+                    platform.move_resize_window_exact(win, restoreRect.x, restoreRect.y, restoreRect.width, restoreRect.height);
+                    return;
+                }
+
+                // resolveMonitor above is scoped inside the auto-tile
+                // feature's own try block and isn't reachable here -
+                // same inline monitor-resolution snippet already
+                // duplicated elsewhere in this file for the same reason.
+                const lm = imports.ui.main.layoutManager;
+                const winMonitorIndex = typeof win.get_monitor === 'function' ? win.get_monitor() : null;
+                const monitor = (Number.isInteger(winMonitorIndex) && lm.monitors[winMonitorIndex])
+                    ? lm.monitors[winMonitorIndex] : lm.primaryMonitor;
+                const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
+
+                platform.reset_window(win);
+                platform.move_resize_window(win, screenX, screenY, screenWidth, screenHeight);
+
+                gapMaximizedState.set(id, preRect);
+            } catch (e) {
+                global.log('gTile: maximize-with-gaps size-changed handler failed: ' + e);
+            }
+        });
+    } catch (e) {
+        global.log('gTile: failed to connect maximize-with-gaps signals: ' + e);
+    }
 };
 const disable = () => {
         if (monitorChangedSignal) {
-            // Main.layoutManager.disconnect(monitorChangedSignal);
+            try {
+                Main.layoutManager.disconnect(monitorChangedSignal);
+            } catch (e) {
+                global.log('gTile: failed to disconnect monitors-changed: ' + e);
+            }
             monitorChangedSignal = null;
         }
+    if (windowCreatedSignal) {
+        try {
+            global.display.disconnect(windowCreatedSignal);
+        } catch (e) {
+            global.log('gTile: failed to disconnect window-created: ' + e);
+        }
+        windowCreatedSignal = null;
+    }
+    if (sizeChangeSignal) {
+        try {
+            global.window_manager.disconnect(sizeChangeSignal);
+        } catch (e) {
+            global.log('gTile: failed to disconnect size-change: ' + e);
+        }
+        sizeChangeSignal = null;
+    }
+    if (sizeChangedSignal) {
+        try {
+            global.window_manager.disconnect(sizeChangedSignal);
+        } catch (e) {
+            global.log('gTile: failed to disconnect size-changed: ' + e);
+        }
+        sizeChangedSignal = null;
+    }
     // unregister DBus object if registered
     try {
         if (dbusRegistrationId) {

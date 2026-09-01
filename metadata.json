@@ -1,18 +1,13 @@
 {
     "cinnamon-version": [
-        "3.6",
-        "3.8",
-        "4.0",
-        "4.2",
-        "4.4",
-        "4.6"
+        "5.4"
     ],
     "uuid": "gTile@OhMyDebn",
     "name": "gTile",
     "description": "Tile your windows as you like.",
-    "version": "2.2.1-20250919",
+    "version": "2.8.18-20260901",
     "multiversion": true,
     "url": "https://github.com/dougburks/gTile",
     "author": "none",
-    "last-edited": 1757789947
+    "last-edited": 1788267053
 }

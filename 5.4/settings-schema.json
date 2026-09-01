@@ -62,7 +62,9 @@
             "useMonitorCenter",
             "showGridOnAllMonitors",
             "select-using-keyboard",
-            "gap-size"
+            "gap-size",
+            "tiling-mode",
+            "maximize-with-gaps"
          ]
       },
       "grid1-section": {
@@ -148,6 +150,24 @@
       "default": "true",
       "description": "Use monitor aspect ratio",
       "tooltip": "Should the popup's grid reflect the current monitor's aspect ratio or not."
+   },
+   "tiling-mode": {
+      "type": "combobox",
+      "default": "off",
+      "description": "Automatic tiling",
+      "options": {
+         "Off": "off",
+         "Rule-based tiling": "rules",
+         "Traditional tiling (3 windows)": "traditional",
+         "Traditional tiling (unlimited)": "traditional-full"
+      },
+      "tooltip": "Off: nothing is tiled automatically - only the manual \"Tile with gaps N\" hotkeys apply.\n\nRule-based tiling: OhMyDebn's own tile-rules.json matches specific apps to specific spots.\n\nTraditional tiling (3 windows): every new window splits into a binary tree (full screen, then left/right, then upper-right/lower-right, alternating vertical/horizontal), capped at 3 windows - a 4th window discards the tree and starts over at full screen; independent per monitor and workspace; ignores tile-rules.json entirely.\n\nTraditional tiling (unlimited): the same binary-tree splitting but keeps going past 3 windows instead of restarting. Both traditional modes automatically rebalance when a window closes, so the remaining windows reclaim the freed space."
+   },
+   "maximize-with-gaps": {
+      "type": "checkbox",
+      "default": "false",
+      "description": "Maximize with gaps",
+      "tooltip": "When maximizing a window (titlebar maximize button, Super+PageUp, or double-clicking the titlebar), leave the existing window-gap margin instead of a true edge-to-edge maximize. Dragging a window to the top edge is not affected - that's a separate top-half tile, not a maximize.\n\nIndependent of Automatic tiling - applies no matter which tiling mode is selected. Uses the same \"Window gaps in pixels\" size set above.\n\nNote: Cinnamon no longer considers a gap-maximized window \"maximized\" internally, so maximizing it again restores it to its original size and position instead of re-maximizing."
    },
    "useMonitorCenter": {
       "type": "checkbox",
