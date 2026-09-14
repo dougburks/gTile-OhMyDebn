@@ -9,7 +9,7 @@ function init(metadata) {
 }
 
 /**
- * called when extension is loaded
+ * called when extension is enabled
  */
 function enable() {
     gtile.enable();

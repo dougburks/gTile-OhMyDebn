@@ -124,6 +124,13 @@ class Config {
         };
         this.destroy = () => {
             this.DisableHotkey();
+            // Deregister this ExtensionSettings instance so a
+            // replacement App's fresh instance doesn't collide with it
+            // in Main.settingsManager (one registration per uuid).
+            if (this.settings && typeof this.settings.finalize === 'function') {
+                this.settings.finalize();
+            }
+            this.settings = null;
         };
         this.app = app;
         this.settings = new Settings.ExtensionSettings(this, 'gTile@OhMyDebn');
@@ -139,7 +146,21 @@ class Config {
         this.settings.bindProperty(Settings.BindingDirection.BIDIRECTIONAL, 'aspect-ratio', 'aspectRatio', this.UpdateGridTableSize, null);
         this.settings.bindProperty(Settings.BindingDirection.BIDIRECTIONAL, 'useMonitorCenter', 'useMonitorCenter', () => this.app.OnCenteredToWindowChanged(), null);
         this.settings.bindProperty(Settings.BindingDirection.BIDIRECTIONAL, 'showGridOnAllMonitors', 'showGridOnAllMonitors', () => this.app.ReInitialize(), null);
-        this.settings.bindProperty(Settings.BindingDirection.BIDIRECTIONAL, 'select-using-keyboard', 'selectUsingKeyboard', this.updateSettings, null);
+        // Tile labels are drawn in the GridElement constructor, so a
+        // toggle has to rebuild the grid elements to take effect -
+        // updateSettings alone only refreshes the toggle buttons,
+        // leaving the letter hotkeys live with no visible labels (or
+        // labels visible with dead letters) until something else
+        // happened to rebuild the grid. If the UI is open right now,
+        // also rebind the key controls so the letter hotkeys match the
+        // labels immediately.
+        this.settings.bindProperty(Settings.BindingDirection.BIDIRECTIONAL, 'select-using-keyboard', 'selectUsingKeyboard', () => {
+            this.app.RefreshGrid();
+            if (this.app.visible) {
+                this.app.RemoveKeyControls();
+                this.app.BindKeyControls();
+            }
+        }, null);
         let basestr = 'grid';
         this.initGridSettings();
         for (let i = 1; i <= 4; i++) {
@@ -151,21 +172,21 @@ class Config {
             this.settings.bindProperty(Settings.BindingDirection.IN, nameOverride, nameOverride, this.updateGridSettings, null);
         }
         this.EnableHotkey();
-        // bind gap-size setting to this.gapSize and update platform gap when it changes
+        // bind gap-size setting to this.gapSize and update platform gap
+        // when it changes. The raw value goes through as-is: set_gap_size
+        // normalizes via normalizeGapSize (gap-math.js), which keeps a
+        // configured 0 at 0 and defaults null/non-numeric to 10 - no
+        // `|| 10`-style fallback here, which once turned 0 into 10.
         this.settings.bindProperty(Settings.BindingDirection.BIDIRECTIONAL, 'gap-size', 'gapSize', () => {
-            // ensure a sensible integer fallback
-            if (this.gapSize == null)
-                this.gapSize = 10;
-            // inform platform (App passed as this.app) about new gap
             if (this.app && this.app.platform && typeof this.app.platform.set_gap_size === 'function') {
-                this.app.platform.set_gap_size(Number(this.gapSize) || 10);
+                this.app.platform.set_gap_size(this.gapSize);
             }
         }, null);
 
         // Ensure the platform has the initial gap value from settings at startup.
         // The bindProperty callback may not be called immediately, so apply it now.
         if (this.app && this.app.platform && typeof this.app.platform.set_gap_size === 'function') {
-            this.app.platform.set_gap_size(Number(this.gapSize) || 10);
+            this.app.platform.set_gap_size(this.gapSize);
         }
     }
     get AnimationTime() {
@@ -229,8 +250,20 @@ const getPanelWidth = (panel) => {
 // BEGIN tile-rules.js
 function matchTileRule(wmClass, title, rules) {
     for (const rule of rules) {
+        if (!rule) continue;
         if (rule.wmClass !== wmClass) continue;
-        if (rule.titleRegex && !new RegExp(rule.titleRegex).test(title || '')) continue;
+        if (rule.titleRegex) {
+            // A malformed titleRegex in one rule must only disable that
+            // one rule - an uncaught throw here would abort the whole
+            // loop and silently kill rule matching for every window.
+            let titleRe;
+            try {
+                titleRe = new RegExp(rule.titleRegex);
+            } catch (e) {
+                continue;
+            }
+            if (!titleRe.test(title || '')) continue;
+        }
         return rule.grid;
     }
     return null;
@@ -251,6 +284,29 @@ function computeGridRect(screenX, screenY, screenWidth, screenHeight, cols, rows
     const areaWidth = widthUnit * (colSpan > 0 ? colSpan : 1);
     const areaHeight = heightUnit * (rowSpan > 0 ? rowSpan : 1);
     return [areaX, areaY, areaWidth, areaHeight];
+}
+
+// Validates a tile request against its own grid (used by the DBus
+// TileFocusedWindow handler; tile-rules.json requests get their own
+// lighter guard since that file is root-owned). Returns null when the
+// request is invalid - a non-positive grid, or an index outside it,
+// would either divide by zero (Infinity/NaN geometry straight into a
+// native Meta resize call, not catchable from JS) or place the window
+// arbitrarily far offscreen. Otherwise returns { colSpan, rowSpan }:
+// the requested spans with the usual "> 0 integer or fall back to 1"
+// guard applied, then clamped to what actually fits between the index
+// and the grid's far edge.
+function validateTileArgs(cols, rows, colIndex, rowIndex, colSpanRaw, rowSpanRaw) {
+    if (!Number.isInteger(cols) || !Number.isInteger(rows) ||
+        !Number.isInteger(colIndex) || !Number.isInteger(rowIndex))
+        return null;
+    if (cols <= 0 || rows <= 0 ||
+        colIndex < 0 || colIndex >= cols ||
+        rowIndex < 0 || rowIndex >= rows)
+        return null;
+    const colSpan = Math.min((Number.isInteger(colSpanRaw) && colSpanRaw > 0) ? colSpanRaw : 1, cols - colIndex);
+    const rowSpan = Math.min((Number.isInteger(rowSpanRaw) && rowSpanRaw > 0) ? rowSpanRaw : 1, rows - rowIndex);
+    return { colSpan: colSpan, rowSpan: rowSpan };
 }
 // END tile-rules.js
 
@@ -415,6 +471,150 @@ function treeRemove(state, leaf) {
 }
 // END traditional-tiling.js
 
+// Kept byte-for-byte in sync with the standalone 5.4/scrollable-tiling.js
+// in this repo - see tests/check-sync.sh, which fails if these two
+// copies ever drift. Pure logic only: no imports.gi, no global.* - this
+// exact block is also loaded and unit-tested standalone via plain
+// `gjs`, with no live Cinnamon session, by
+// tests/test-scrollable-tiling.js.
+// BEGIN scrollable-tiling.js
+// The "scrollable-column-width" setting is a percent - normalize it
+// into the (0..1] width fraction the rest of this file uses: null,
+// non-numeric, or non-positive falls back to 50%, and sane values
+// clamp to 10..100 so the division in stripVisibleCount below can't
+// blow up.
+function columnWidthFraction(percent) {
+    const n = Number(percent);
+    if (!Number.isFinite(n) || n <= 0)
+        return 0.5;
+    return Math.min(100, Math.max(10, n)) / 100;
+}
+
+// The "scroll-animation-duration" setting is milliseconds - 0 is a
+// real value meaning "no tiling animation" (pinned by the tests so
+// the disable contract can't silently break), negatives clamp to 0,
+// fractions floor, values past 1000 clamp down, and anything
+// non-numeric - or an unset null/undefined - falls back to the
+// default of 200.
+function normalizeScrollDuration(ms) {
+    if (ms == null)
+        return 200;
+    const n = Number(ms);
+    if (!Number.isFinite(n))
+        return 200;
+    return Math.min(1000, Math.max(0, Math.floor(n)));
+}
+
+// The tiling-mode cycle driven by the "cycle tiling mode" hotkeys and
+// the CycleTilingMode DBus method. Mode-level rather than
+// scrollable-specific, but it lives in this file to share the
+// embed/test infrastructure. The order matches the settings
+// combobox top to bottom, and the settings-schema test cross-checks
+// that this list and the combobox options can never drift apart.
+// var, not const - same eval() scoping reason as TREE_FULL_REGION in
+// traditional-tiling.js.
+var TILING_MODE_CYCLE = ['off', 'rules', 'traditional', 'traditional-full', 'scrollable'];
+
+// Next mode in the cycle: direction < 0 steps backward, anything else
+// forward, wrapping at both ends. An unknown/unset current mode lands
+// on 'off' - the schema default and the safest state to recover into.
+function nextTilingMode(current, direction) {
+    const index = TILING_MODE_CYCLE.indexOf(current);
+    if (index === -1)
+        return 'off';
+    const step = direction < 0 ? -1 : 1;
+    const length = TILING_MODE_CYCLE.length;
+    return TILING_MODE_CYCLE[(index + step + length) % length];
+}
+
+// How many whole columns fit in the viewport at once. The epsilon
+// absorbs float noise like 1 / (1/3) = 3.0000000000000004.
+function stripVisibleCount(widthFraction) {
+    if (!Number.isFinite(widthFraction) || widthFraction <= 0 || widthFraction > 1)
+        return 1;
+    return Math.max(1, Math.floor(1 / widthFraction + 1e-9));
+}
+
+// Insert `newWindow` as a new column directly right of column
+// `afterIndex` (the Niri rule: new columns open right of the focused
+// one); an invalid/absent afterIndex appends at the end of the strip.
+// Returns a new array - never mutates the input.
+function stripInsert(columns, newWindow, afterIndex) {
+    const next = columns.slice();
+    if (Number.isInteger(afterIndex) && afterIndex >= 0 && afterIndex < columns.length)
+        next.splice(afterIndex + 1, 0, newWindow);
+    else
+        next.push(newWindow);
+    return next;
+}
+
+// Remove `window`'s column. An unknown window returns the input array
+// itself (same reference - callers may use that to skip a re-layout).
+function stripRemove(columns, window) {
+    const index = columns.indexOf(window);
+    if (index === -1)
+        return columns;
+    const next = columns.slice();
+    next.splice(index, 1);
+    return next;
+}
+
+// Swap `window`'s column with its neighbor (direction < 0 = left,
+// otherwise right). No-op (input array returned unchanged, same
+// reference) at the strip's edges or for an unknown window.
+function stripMoveColumn(columns, window, direction) {
+    const index = columns.indexOf(window);
+    if (index === -1)
+        return columns;
+    const target = index + (direction < 0 ? -1 : 1);
+    if (target < 0 || target >= columns.length)
+        return columns;
+    const next = columns.slice();
+    next[index] = next[target];
+    next[target] = window;
+    return next;
+}
+
+// The viewport rule: clamp firstVisible into the strip, then shift it
+// the MINIMAL amount needed to bring targetIndex fully into view
+// (Niri's own scroll behavior - the view never jumps further than it
+// has to). Pass a null/invalid targetIndex to just clamp.
+function scrollToShow(firstVisible, targetIndex, visibleCount, columnCount) {
+    let fv = Number.isInteger(firstVisible) ? firstVisible : 0;
+    fv = Math.min(Math.max(0, fv), Math.max(0, columnCount - visibleCount));
+    if (Number.isInteger(targetIndex) && targetIndex >= 0 && targetIndex < columnCount) {
+        if (targetIndex < fv)
+            fv = targetIndex;
+        else if (targetIndex > fv + visibleCount - 1)
+            fv = targetIndex - visibleCount + 1;
+    }
+    return fv;
+}
+
+// Full per-column layout for the current viewport: one entry per
+// column, in strip order - { window, visible, region }. Off-viewport
+// columns get visible: false and a null region (the impure layer
+// minimizes them; there is no meaningful on-screen rect). The lone-
+// column full-width rule lives here, so every caller gets it for
+// free.
+function stripLayout(columns, firstVisible, widthFraction) {
+    if (columns.length === 1)
+        return [{ window: columns[0], visible: true, region: { x: 0, width: 1 } }];
+    const visibleCount = stripVisibleCount(widthFraction);
+    const fv = scrollToShow(firstVisible, null, visibleCount, columns.length);
+    const layout = [];
+    for (let i = 0; i < columns.length; i++) {
+        const visible = i >= fv && i < fv + visibleCount;
+        layout.push({
+            window: columns[i],
+            visible: visible,
+            region: visible ? { x: (i - fv) * widthFraction, width: widthFraction } : null,
+        });
+    }
+    return layout;
+}
+// END scrollable-tiling.js
+
 // Kept byte-for-byte in sync with the standalone 5.4/screen-area.js in
 // this repo - see tests/check-sync.sh, which fails if these two copies
 // ever drift. Pure functions only: no imports.gi, no global.* - this
@@ -449,6 +649,83 @@ function computeUsableArea(monitor, panels) {
 }
 // END screen-area.js
 
+// Kept byte-for-byte in sync with the standalone 5.4/gap-math.js in
+// this repo - see tests/check-sync.sh, which fails if these two copies
+// ever drift. Pure functions only: no imports.gi, no global.* - this
+// exact block is also loaded and unit-tested standalone via plain
+// `gjs`, with no live Cinnamon session, by tests/test-gap-math.js.
+// BEGIN gap-math.js
+// For sides that touch (or extend past) the usable area's edge, keep
+// the full gap against that edge. For internal sides (between two
+// windows), use HALF the gap on each window so two neighboring tiles
+// end up gapSize apart in total. floor()ing the half means an odd
+// gapSize leaves neighbors 2 * floor(gapSize / 2) apart rather than
+// exactly gapSize - accepted rounding, pinned down by the tests so it
+// can't change silently. Sizes clamp at 0 rather than going negative
+// when the gap exceeds the rect.
+function computeGappedRect(x, y, width, height, usableLeft, usableTop, usableWidth, usableHeight, gapSize) {
+    const usableRight = usableLeft + usableWidth;
+    const usableBottom = usableTop + usableHeight;
+    const halfGap = Math.floor(gapSize / 2);
+    let leftPadding = halfGap;
+    let rightPadding = halfGap;
+    let topPadding = halfGap;
+    let bottomPadding = halfGap;
+    if (x <= usableLeft)
+        leftPadding = gapSize;
+    if ((x + width) >= usableRight)
+        rightPadding = gapSize;
+    if (y <= usableTop)
+        topPadding = gapSize;
+    if ((y + height) >= usableBottom)
+        bottomPadding = gapSize;
+    let newWidth = width - (leftPadding + rightPadding);
+    let newHeight = height - (topPadding + bottomPadding);
+    if (newWidth < 0) newWidth = 0;
+    if (newHeight < 0) newHeight = 0;
+    return [x + leftPadding, y + topPadding, newWidth, newHeight];
+}
+
+// Normalizes a configured gap value into the integer pixel count
+// actually used: 0 is valid and stays 0 (a `|| 10`-style fallback at a
+// call site once silently turned a configured gap of 0 into 10 - the
+// regression the tests pin), negatives clamp to 0, fractions floor,
+// and anything non-numeric - or an unset null/undefined - falls back
+// to the default of 10.
+function normalizeGapSize(value) {
+    if (value == null)
+        return 10;
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 10;
+}
+// END gap-math.js
+
+// Kept byte-for-byte in sync with the standalone 5.4/tile-labels.js in
+// this repo - see tests/check-sync.sh, which fails if these two copies
+// ever drift. Pure functions only: no imports.gi, no global.* - this
+// exact block is also loaded and unit-tested standalone via plain
+// `gjs`, with no live Cinnamon session, by tests/test-tile-labels.js.
+// BEGIN tile-labels.js
+function tileIndexToLabel(index) {
+    if (!Number.isInteger(index) || index < 0 || index >= 52)
+        return null;
+    if (index < 26)
+        return String.fromCharCode('a'.charCodeAt(0) + index);
+    return String.fromCharCode('A'.charCodeAt(0) + index - 26);
+}
+
+function tileLabelToIndex(letter) {
+    if (typeof letter !== 'string' || letter.length !== 1)
+        return null;
+    const charCode = letter.charCodeAt(0);
+    if (charCode >= 'a'.charCodeAt(0) && charCode <= 'z'.charCodeAt(0))
+        return charCode - 'a'.charCodeAt(0);
+    if (charCode >= 'A'.charCodeAt(0) && charCode <= 'Z'.charCodeAt(0))
+        return charCode - 'A'.charCodeAt(0) + 26;
+    return null;
+}
+// END tile-labels.js
+
 // Thin impure wrapper around computeUsableArea above - maps Cinnamon's
 // live Panel objects into the plain { position, size, hideable }
 // descriptors that pure function takes, then hands off the actual math
@@ -478,9 +755,6 @@ const getUsableScreenArea = (monitor) => {
         return { position: position, size: size, hideable: panel.isHideable() };
     });
     return computeUsableArea(monitor, panels);
-};
-const getMonitorKey = (monitor) => {
-    return monitor.x + ':' + monitor.width + ':' + monitor.y + ':' + monitor.height;
 };
 const getAdjacentMonitor = (monitor, side) => {
     const monitors = utils_Main.layoutManager.monitors;
@@ -522,9 +796,6 @@ function isEqual(monitor1, monitor2) {
 const getFocusApp = () => {
     return global.display.focus_window;
 };
-const isPrimaryMonitor = (monitor) => {
-    return utils_Main.layoutManager.primaryMonitor === monitor;
-};
 function intersection(a, b) {
     let min = (a[0] < b[0] ? a : b);
     let max = (min == a ? b : a);
@@ -553,9 +824,7 @@ const SETTINGS_AUTO_CLOSE = 'autoclose';
 const SETTINGS_ANIMATION = 'animation';
 const TOOLTIPS = {
     [SETTINGS_AUTO_CLOSE]: _("Auto close"),
-    [SETTINGS_ANIMATION]: _("Animations"),
-    'action-main-list': _("Auto tile main and list"),
-    'action-two-list': _("Auto tile two lists")
+    [SETTINGS_ANIMATION]: _("Popup animation")
 };
 const KEYCONTROL = {
     'gTile-k-left': 'Left',
@@ -619,100 +888,8 @@ ActionButton = __decorate([
 
 ;
 
-;// CONCATENATED MODULE: ../base/ui/AutoTileMainAndList.ts
-var AutoTileMainAndList_decorate = (undefined && undefined.__decorate) || function (decorators, target, key, desc) {
-    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
-    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
-    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
-    return c > 3 && r && Object.defineProperty(target, key, r), r;
-};
-
-
-let AutoTileMainAndList = class AutoTileMainAndList extends ActionButton {
-    constructor(app) {
-        super('action-main-list', "auto_tile_0-symbolic");
-        this._onButtonPress = () => {
-            if (!this.app.FocusMetaWindow)
-                return false;
-            this.app.platform.reset_window(this.app.FocusMetaWindow);
-            let monitor = this.app.CurrentMonitor;
-            let [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
-            let windows = this.app.GetNotFocusedWindowsOfMonitor(monitor);
-            this.app.platform.move_resize_window(this.app.FocusMetaWindow, screenX, screenY, screenWidth / 2, screenHeight);
-            let winHeight = screenHeight / windows.length;
-            let countWin = 0;
-            for (let windowIdx in windows) {
-                let metaWindow = windows[windowIdx];
-                let newOffset = countWin * winHeight;
-                this.app.platform.reset_window(metaWindow);
-                this.app.platform.move_resize_window(metaWindow, screenX + screenWidth / 2, screenY + newOffset, screenWidth / 2, winHeight);
-                countWin++;
-            }
-            this.emit('resize-done');
-            return false;
-        };
-        this.app = app;
-        this.classname = 'action-main-list';
-        this.connect('button-press-event', this._onButtonPress);
-    }
-};
-AutoTileMainAndList = AutoTileMainAndList_decorate([
-    addSignals
-], AutoTileMainAndList);
-
-;
-
-;// CONCATENATED MODULE: ../base/ui/AutoTileTwoList.ts
-var AutoTileTwoList_decorate = (undefined && undefined.__decorate) || function (decorators, target, key, desc) {
-    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
-    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
-    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
-    return c > 3 && r && Object.defineProperty(target, key, r), r;
-};
-
-
-let AutoTileTwoList = class AutoTileTwoList extends ActionButton {
-    constructor(app) {
-        super('action-two-list', "auto_tile_1-symbolic");
-        this._onButtonPress = () => {
-            if (!this.app.FocusMetaWindow)
-                return false;
-            this.app.platform.reset_window(this.app.FocusMetaWindow);
-            let monitor = this.app.CurrentMonitor;
-            let [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
-            let windows = this.app.GetNotFocusedWindowsOfMonitor(monitor);
-            let nbWindowOnEachSide = Math.ceil((windows.length + 1) / 2);
-            let winHeight = screenHeight / nbWindowOnEachSide;
-            let countWin = 0;
-            let xOffset = ((countWin % 2) * screenWidth) / 2;
-            let yOffset = Math.floor(countWin / 2) * winHeight;
-            this.app.platform.move_resize_window(this.app.FocusMetaWindow, screenX + xOffset, screenY + yOffset, screenWidth / 2, winHeight);
-            countWin++;
-            for (let windowIdx in windows) {
-                let metaWindow = windows[windowIdx];
-                xOffset = ((countWin % 2) * screenWidth) / 2;
-                yOffset = Math.floor(countWin / 2) * winHeight;
-                this.app.platform.reset_window(metaWindow);
-                this.app.platform.move_resize_window(metaWindow, screenX + xOffset, screenY + yOffset, screenWidth / 2, winHeight);
-                countWin++;
-            }
-            this.emit('resize-done');
-            return false;
-        };
-        this.app = app;
-        this.classname = 'action-two-list';
-        this.connect('button-press-event', this._onButtonPress);
-    }
-};
-AutoTileTwoList = AutoTileTwoList_decorate([
-    addSignals
-], AutoTileTwoList);
-
-;
-
 ;// CONCATENATED MODULE: ../base/ui/GridElement.ts
 
-const GridElement_Main = imports.ui.main;
 const GridElement_St = imports.gi.St;
 class GridElement {
     constructor(app, monitor, grid, width, height, coordx, coordy, delegate, numCols) {
@@ -735,9 +912,6 @@ class GridElement {
             if (!this.actor || isFinalized(this.actor))
                 return;
             this.actor.remove_style_pseudo_class('activate');
-        };
-        this._clean = () => {
-            GridElement_Main.uiGroup.remove_actor(this.app.area);
         };
         this._destroy = () => {
             this.monitor = null;
@@ -771,22 +945,20 @@ class GridElement {
         this.actor.connect('notify::hover', this._onHoverChanged);
         this.active = false;
 
-        // Add label
+        // Add label - tileIndexToLabel (see tile-labels.js) returns
+        // null past the 52 available letters (a-z, A-Z), so tiles that
+        // far into a very large grid simply get no label.
         if (this.app.config.selectUsingKeyboard) {
-            const labelIndex = coordy * numCols + coordx;
-            let labelText;
-            if (labelIndex < 26) {
-                labelText = String.fromCharCode('a'.charCodeAt(0) + labelIndex);
-            } else {
-                labelText = String.fromCharCode('A'.charCodeAt(0) + labelIndex - 26);
+            const labelText = tileIndexToLabel(coordy * numCols + coordx);
+            if (labelText !== null) {
+                const label = new GridElement_St.Label({
+                    style_class: 'tile-label',
+                    text: labelText,
+                    x_align: St.Align.MIDDLE,
+                    y_align: St.Align.MIDDLE
+                });
+                this.actor.add_actor(label);
             }
-            const label = new GridElement_St.Label({
-                style_class: 'tile-label',
-                text: labelText,
-                x_align: St.Align.MIDDLE,
-                y_align: St.Align.MIDDLE
-            });
-            this.actor.add_actor(label);
         }
     }
 }
@@ -804,7 +976,6 @@ let GridElementDelegate = class GridElementDelegate {
     constructor(app) {
         this.activated = false;
         this.first = null;
-        this.last = null;
         this.currentElement = null;
         this.activatedActors = null;
         this._allSelected = () => {
@@ -818,7 +989,6 @@ let GridElementDelegate = class GridElementDelegate {
             this._resetGrid();
             this.activated = false;
             this.first = null;
-            this.last = null;
             this.currentElement = null;
         };
         this._resetGrid = () => {
@@ -926,7 +1096,6 @@ let GridElementDelegate = class GridElementDelegate {
         this._destroy = () => {
             this.activated = null;
             this.first = null;
-            this.last = null;
             this.currentElement = null;
             this.activatedActors = null;
             this._hideArea();
@@ -991,7 +1160,6 @@ let ToggleSettingsButton = class ToggleSettingsButton {
         this._update = () => {
             this.active = this.settings[this.property];
             if (this.active) {
-                this.actor.opacity = 255;
                 this.actor.add_style_pseudo_class('activate');
             }
             else {
@@ -1071,6 +1239,10 @@ class TopBar {
         this._icon = app.create_icon_texture(24);
         this._iconBin.set_size(24, 24);
         this._iconBin.set_child(this._icon);
+    }
+    _destroy() {
+        this._title = null;
+        this._icon = null;
     }
 }
 
@@ -1159,7 +1331,7 @@ let Grid = class Grid {
             this.table.destroy_all_children();
             this.cols = this.app.config.nbCols;
             this.rows = this.app.config.nbRows;
-            if (this.cols.length <= this.colKey || this.rows.length <= this.colKey)
+            if (this.cols.length <= this.colKey || this.rows.length <= this.rowKey)
                 this.Reset();
             this.RebuildGridElements();
         };
@@ -1216,7 +1388,9 @@ let Grid = class Grid {
         };
         this.OnMouseLeave = () => {
             let [x, y, mask] = global.get_pointer();
-            if ((this.elementsDelegate && (x <= this.actor.x || x >= this.actor.x + this.actor.width)) || (y <= this.actor.y || y >= this.actor.y + this.tableHeight + this.topbar.actor.height)) {
+            if (this.elementsDelegate &&
+                (x <= this.actor.x || x >= this.actor.x + this.actor.width ||
+                    y <= this.actor.y || y >= this.actor.y + this.tableHeight + this.topbar.actor.height)) {
                 this.isEntered = false;
                 this.elementsDelegate.reset();
             }
@@ -1322,6 +1496,12 @@ let Grid = class Grid {
             this.rows = null;
             this.title = null;
             this.cols = null;
+            // Actually release the Clutter actors (removeChrome alone
+            // only unparents them from the stage) - without this every
+            // ReInitialize/monitor change leaked the whole grid actor
+            // tree.
+            this.actor.destroy();
+            this.actor = null;
         };
         this.app = app;
         this.tableHeight = 200;
@@ -1379,14 +1559,6 @@ let Grid = class Grid {
         toggle = new ToggleSettingsButton(this.app.config, 'auto-close', SETTINGS_AUTO_CLOSE, "auto_close_black-symbolic");
         this.veryBottomBar.add(toggle.actor, { row: 0, col: 1, x_fill: false, y_fill: false });
         this.toggleSettingButtons.push(toggle);
-      /*
-        let action = new AutoTileMainAndList(this.app);
-        this.veryBottomBar.add(action.actor, { row: 0, col: 2, x_fill: false, y_fill: false });
-        action.connect('resize-done', this.OnResize);
-        let actionTwo = new AutoTileTwoList(this.app);
-        this.veryBottomBar.add(actionTwo.actor, { row: 0, col: 3, x_fill: false, y_fill: false });
-        actionTwo.connect('resize-done', this.OnResize);
-        */
         this.x = 0;
         this.y = 0;
         this.interceptHide = false;
@@ -1513,22 +1685,6 @@ class App {
             }
             app_Main.layoutManager["_chrome"].updateRegions();
         };
-        this.GetNotFocusedWindowsOfMonitor = (monitor) => {
-            return app_Main.getTabList().filter((w) => {
-                let app = this.tracker.get_window_app(w);
-                let w_monitor = app_Main.layoutManager.monitors[w.get_monitor()];
-                if (app == null) {
-                    return false;
-                }
-                if (w.minimized) {
-                    return false;
-                }
-                if (w_monitor !== monitor) {
-                    return false;
-                }
-                return this.focusMetaWindow !== w && w.get_wm_class() != null;
-            });
-        };
         this.ToggleUI = () => {
             if (this.visible) {
                 this.HideUI();
@@ -1549,25 +1705,47 @@ class App {
         this.ShowUI = () => {
             var _a;
             this.focusMetaWindow = getFocusApp();
-            let wm_type = this.focusMetaWindow.get_window_type();
-            let layer = this.focusMetaWindow.get_layer();
-            this.area.visible = true;
             const window = this.focusMetaWindow;
-            if (window != null && wm_type !== 1 && layer > 0) {
-                for (const grid of this.grids) {
-                    if (!this.config.showGridOnAllMonitors)
-                        grid.ChangeCurrentMonitor((_a = this.monitors.find(x => x.index == window.get_monitor())) !== null && _a !== void 0 ? _a : app_Main.layoutManager.primaryMonitor);
-                    const [pos_x, pos_y] = (!this.config.useMonitorCenter && grid.monitor.index == this.currentMonitor.index) ? this.platform.get_window_center(window) : GetMonitorCenter(grid.monitor);
-                    grid.Show(Math.floor(pos_x - grid.actor.width / 2), Math.floor(pos_y - grid.actor.height / 2));
-                    this.OnFocusedWindowChanged();
-                    this.visible = true;
-                }
+            // No focused window (empty desktop) - nothing to tile, and
+            // dereferencing null below would throw.
+            if (window == null)
+                return;
+            let wm_type = window.get_window_type();
+            let layer = window.get_layer();
+            // A desktop-type or layer-0 window can't be tiled, so no
+            // grid is shown - and with no grid, binding the key
+            // controls below would hijack Escape/arrows/Space (and,
+            // with tile labels on, every letter key) with no visible
+            // UI and no way out: Escape maps to ToggleUI, which with
+            // `visible` still false just re-enters here. Bail out
+            // before touching anything instead.
+            if (wm_type === Meta.WindowType.DESKTOP || layer <= 0)
+                return;
+            this.area.visible = true;
+            for (const grid of this.grids) {
+                if (!this.config.showGridOnAllMonitors)
+                    grid.ChangeCurrentMonitor((_a = this.monitors.find(x => x.index == window.get_monitor())) !== null && _a !== void 0 ? _a : app_Main.layoutManager.primaryMonitor);
+                const [pos_x, pos_y] = (!this.config.useMonitorCenter && grid.monitor.index == this.currentMonitor.index) ? this.platform.get_window_center(window) : GetMonitorCenter(grid.monitor);
+                grid.Show(Math.floor(pos_x - grid.actor.width / 2), Math.floor(pos_y - grid.actor.height / 2));
             }
+            // Once for the whole UI, not once per grid - the per-grid
+            // loops inside it already cover every monitor's grid.
+            this.OnFocusedWindowChanged();
+            this.visible = true;
             this.MoveUIActor();
             this.BindKeyControls();
         };
         this.HideUI = () => {
             this.RemoveKeyControls();
+            // Drop any half-finished letter selection so it can't leak
+            // into the next time the UI is opened (a stale first letter
+            // would instantly complete the next selection).
+            if (this.firstLetterSelection !== null) {
+                const tile = this.getGridElementFromLetter(this.firstLetterSelection);
+                if (tile)
+                    tile._deactivate();
+                this.firstLetterSelection = null;
+            }
             for (const grid of this.grids) {
                 grid.elementsDelegate.reset();
                 grid.Hide(false);
@@ -1588,12 +1766,16 @@ class App {
                     app_Main.keybindingManager.addHotKey(type, key, () => this.CurrentGrid.OnKeyPressEvent(type, key));
                 }
             }
-            // Add keybindings for a-z and A-Z
-            for (let i = 0; i < 26; i++) {
-                const lowerCaseLetter = String.fromCharCode('a'.charCodeAt(0) + i);
-                app_Main.keybindingManager.addHotKey(`gTile-letter-${lowerCaseLetter}`, lowerCaseLetter, () => this.handleLetterInput(lowerCaseLetter));
-                const upperCaseLetter = String.fromCharCode('A'.charCodeAt(0) + i);
-                app_Main.keybindingManager.addHotKey(`gTile-letter-${upperCaseLetter}`, '<Shift>' + lowerCaseLetter, () => this.handleLetterInput(upperCaseLetter));
+            // Add keybindings for a-z and A-Z - but only when tile
+            // labels are shown; with labels off the letters would
+            // trigger invisible tiling behavior.
+            if (this.config.selectUsingKeyboard) {
+                for (let i = 0; i < 26; i++) {
+                    const lowerCaseLetter = String.fromCharCode('a'.charCodeAt(0) + i);
+                    app_Main.keybindingManager.addHotKey(`gTile-letter-${lowerCaseLetter}`, lowerCaseLetter, () => this.handleLetterInput(lowerCaseLetter));
+                    const upperCaseLetter = String.fromCharCode('A'.charCodeAt(0) + i);
+                    app_Main.keybindingManager.addHotKey(`gTile-letter-${upperCaseLetter}`, '<Shift>' + lowerCaseLetter, () => this.handleLetterInput(upperCaseLetter));
+                }
             }
         };
         this.RemoveKeyControls = () => {
@@ -1622,8 +1804,10 @@ class App {
                 if (typeof grid != 'undefined') {
                     grid.Hide(true);
                     app_Main.layoutManager.removeChrome(grid.actor);
+                    grid.destroy();
                 }
             }
+            this.grids = [];
         };
         this.MoveUIActor = () => {
             if (!this.visible) {
@@ -1749,16 +1933,10 @@ class App {
             if (!grid || !grid.elements) return null;
 
             const numCols = grid.cols.length;
-            const charCode = letter.charCodeAt(0);
-            let labelIndex;
-
-            if (charCode >= 'a'.charCodeAt(0) && charCode <= 'z'.charCodeAt(0)) {
-                labelIndex = charCode - 'a'.charCodeAt(0);
-            } else if (charCode >= 'A'.charCodeAt(0) && charCode <= 'Z'.charCodeAt(0)) {
-                labelIndex = charCode - 'A'.charCodeAt(0) + 26;
-            } else {
-                return null;
-            }
+            // Reverse of the tileIndexToLabel used to draw the labels -
+            // both live in tile-labels.js so they can't disagree.
+            const labelIndex = tileLabelToIndex(letter);
+            if (labelIndex === null) return null;
 
             const r = Math.floor(labelIndex / numCols);
             const c = labelIndex % numCols;
@@ -1770,13 +1948,17 @@ class App {
             return null;
         };
 
-        this.firstLetterSelection = null; // Added
+        this.firstLetterSelection = null;
         this.platform = platform;
         app_Main.uiGroup.add_actor(this.area);
         this.config = new Config(this);
         this.InitGrid();
-        this.tracker.connect("notify::focus-app", this.OnFocusedWindowChanged);
-        global.screen.connect('monitors-changed', this.ReInitialize);
+        // Stored so destroy() can disconnect it - otherwise every
+        // destroyed App (extension reload, monitor change) would keep
+        // reacting to focus changes forever. Monitor changes are handled
+        // by extension.ts's own monitors-changed handler, which destroys
+        // and recreates the whole App - no second connection here.
+        this.trackerSignal = this.tracker.connect("notify::focus-app", this.OnFocusedWindowChanged);
     }
     get CurrentMonitor() {
         return this.currentMonitor;
@@ -1792,6 +1974,10 @@ class App {
         return this.grids;
     }
     destroy() {
+        if (this.trackerSignal) {
+            this.tracker.disconnect(this.trackerSignal);
+            this.trackerSignal = null;
+        }
         this.config.destroy();
         this.DestroyGrid();
         this.ResetFocusedWindow();
@@ -1815,10 +2001,34 @@ class App {
 ;// CONCATENATED MODULE: ./utils.ts
 const utils_Meta = imports.gi.Meta;
 const utils_Main_0 = imports.ui.main;
+// Hook installed by extension.ts's enable() (cleared again on
+// disable): called with the window at the start of every reset_window,
+// which is the first step of every tiling action this extension
+// performs (overlay click, letter selection, DBus TileFocusedWindow,
+// auto-tile). It lets enable()'s per-window maximize-tracking maps
+// (nativeRestoreTarget et al.) drop their entries for a window the
+// moment the extension itself re-tiles it - otherwise a stale
+// nativeRestoreTarget entry left over from an earlier native maximize
+// would, when the unmaximize this reset performs completes ('size-
+// changed' arrives after the tile has been applied), see a frame rect
+// that doesn't match its recorded pre-maximize rect and snap the
+// window back to that old rect, silently undoing the just-applied
+// tile.
+let prune_window_state_hook = null;
+const set_prune_window_state_hook = (fn) => {
+    prune_window_state_hook = fn;
+};
 const reset_window = (metaWindow) => {
-    metaWindow === null || metaWindow === void 0 ? void 0 : metaWindow.unmaximize(utils_Meta.MaximizeFlags.HORIZONTAL);
-    metaWindow === null || metaWindow === void 0 ? void 0 : metaWindow.unmaximize(utils_Meta.MaximizeFlags.VERTICAL);
-    metaWindow === null || metaWindow === void 0 ? void 0 : metaWindow.unmaximize(utils_Meta.MaximizeFlags.HORIZONTAL | utils_Meta.MaximizeFlags.VERTICAL);
+    if (metaWindow == null)
+        return;
+    if (prune_window_state_hook) {
+        try {
+            prune_window_state_hook(metaWindow);
+        } catch (e) { }
+    }
+    metaWindow.unmaximize(utils_Meta.MaximizeFlags.HORIZONTAL);
+    metaWindow.unmaximize(utils_Meta.MaximizeFlags.VERTICAL);
+    metaWindow.unmaximize(utils_Meta.MaximizeFlags.HORIZONTAL | utils_Meta.MaximizeFlags.VERTICAL);
 };
 const _getInvisibleBorderPadding = (metaWindow) => {
     let outerRect = metaWindow.get_frame_rect();
@@ -1836,11 +2046,12 @@ const move_maximize_window = (metaWindow, x, y) => {
     metaWindow.maximize(utils_Meta.MaximizeFlags.HORIZONTAL | utils_Meta.MaximizeFlags.VERTICAL);
 };
 
-// mutable GAP value and setter (default 10)
+// mutable GAP value and setter (default 10). All normalization lives
+// in normalizeGapSize (gap-math.js, embedded above) so it's unit-
+// tested - callers pass the raw setting value straight through.
 let GAP_SIZE = 10;
 const set_gap_size = (size) => {
-    const n = Number(size);
-    GAP_SIZE = isNaN(n) ? 10 : Math.max(0, Math.floor(n));
+    GAP_SIZE = normalizeGapSize(size);
 };
 
 const move_resize_window = (metaWindow, x, y, width, height) => {
@@ -1877,34 +2088,10 @@ const move_resize_window = (metaWindow, x, y, width, height) => {
         usableWidth = monitor.width;
         usableHeight = monitor.height;
     }
-    const usableRight = usableLeft + usableWidth;
-    const usableBottom = usableTop + usableHeight;
-
-    // For sides that touch the usable area edge, keep the full GAP.
-    // For internal sides (between two windows), use HALF_GAP on each window so the total gap is GAP_SIZE.
-    const HALF_GAP = Math.floor(GAP_SIZE / 2);
-    let leftPadding = HALF_GAP;
-    let rightPadding = HALF_GAP;
-    let topPadding = HALF_GAP;
-    let bottomPadding = HALF_GAP;
-
-    if (x <= usableLeft)
-        leftPadding = GAP_SIZE;
-    if ((x + width) >= usableRight)
-        rightPadding = GAP_SIZE;
-    if (y <= usableTop)
-        topPadding = GAP_SIZE;
-    if ((y + height) >= usableBottom)
-        bottomPadding = GAP_SIZE;
-
-    x += leftPadding;
-    y += topPadding;
-    width -= (leftPadding + rightPadding);
-    height -= (topPadding + bottomPadding);
-
-    // Ensure we don't produce negative sizes
-    if (width < 0) width = 0;
-    if (height < 0) height = 0;
+    // Full gap at usable-area edges, half gap on internal sides so
+    // neighboring tiles end up GAP_SIZE apart - see gap-math.js (whose
+    // embedded copy above carries the details and the unit tests).
+    [x, y, width, height] = computeGappedRect(x, y, width, height, usableLeft, usableTop, usableWidth, usableHeight, GAP_SIZE);
 
     // move_resize_frame alone already sets both position and size in one
     // call - a trailing move_frame(x, y) here was genuinely redundant for
@@ -1921,6 +2108,26 @@ const move_resize_window = (metaWindow, x, y, width, height) => {
     // rather than move_resize_frame itself - manually-resized windows
     // (never touched by this function) restored exactly, every time.
     metaWindow.move_resize_frame(true, x, y, width, height);
+    ensure_frame_position(metaWindow, x, y);
+};
+// Windows that set WM_NORMAL_HINTS resize increments (xterm and
+// friends): Muffin snaps the requested size to the client's character
+// grid, and in that adjusted path the requested POSITION gets dropped
+// entirely - live-confirmed on Cinnamon 6.x with xterm: after a bare
+// move_resize_frame the size had applied but the window still sat at
+// Muffin's cascade placement, while a GTK window (no increments) got
+// both. This follow-up move_frame is issued ONLY when the position
+// verifiably failed to land - an unconditional second geometry call is
+// exactly what caused the maximize/restore shrink bug documented in
+// move_resize_window above, so well-behaved windows (the overwhelming
+// majority) must keep taking the single-call path.
+const ensure_frame_position = (metaWindow, x, y) => {
+    try {
+        const rect = metaWindow.get_frame_rect();
+        if (Math.abs(rect.x - x) > 1 || Math.abs(rect.y - y) > 1) {
+            metaWindow.move_frame(true, x, y);
+        }
+    } catch (e) { }
 };
 // Same as move_resize_window, minus the gap padding - move_resize_window
 // always shrinks by at least HALF_GAP on every side (there's no
@@ -1932,9 +2139,12 @@ const move_resize_window = (metaWindow, x, y, width, height) => {
 const move_resize_window_exact = (metaWindow, x, y, width, height) => {
     if (metaWindow == null)
         return;
-    // No trailing move_frame call here either - see move_resize_window's
-    // own comment on why that was removed.
+    // No unconditional trailing move_frame call here either - see
+    // move_resize_window's own comment on why that was removed;
+    // ensure_frame_position below re-issues the position only for
+    // windows whose size-increment snapping dropped it.
     metaWindow.move_resize_frame(true, x, y, width, height);
+    ensure_frame_position(metaWindow, x, y);
 };
 const get_window_center = (window) => {
     const pos_x = window.get_frame_rect().width / 2 + window.get_frame_rect().x;
@@ -1958,12 +2168,39 @@ const unsubscribe_from_focused_window_changes = (window, ...signals) => {
 
 ;// CONCATENATED MODULE: ./extension.ts
 
-    let monitorChangedSignal = null;
-let dbusRegistrationId = null; // <-- added
-let dbusOwnerId = null; // <-- new
-let windowCreatedSignal = null; // <-- new: auto-tile on window-created
-let sizeChangeSignal = null; // <-- new: maximize-with-gaps (pre)
-let sizeChangedSignal = null; // <-- new: maximize-with-gaps (post)
+let monitorChangedSignal = null;
+let dbusRegistrationId = null;
+let dbusOwnerId = null;
+let windowCreatedSignal = null; // auto-tile on window-created
+let sizeChangeSignal = null; // maximize-with-gaps (pre)
+let sizeChangedSignal = null; // maximize-with-gaps (post)
+let windowDestroyedSignal = null; // prunes per-window state maps
+let focusWindowSignal = null; // scrollable tiling (focus-driven scrolling)
+// The extension's own global hotkeys (beyond the overlay toggle,
+// which Config manages): settings key, target property,
+// keybindingManager registration name, and the action verb each one
+// drives (cycle-* runs cycleTilingMode, open-settings spawns the
+// settings window, everything else goes through
+// scrollableColumnAction - see rebindGtileHotkeys). Module scope
+// (static data, no closures) so enable()'s registration and
+// disable()'s removal share one source of truth instead of a
+// hand-synced list.
+const GTILE_HOTKEYS = [
+    { settingKey: 'hotkey-cycle-tiling-mode', prop: 'cycleForward', name: 'gtile-cycle-tiling-mode', action: 'cycle-forward' },
+    { settingKey: 'hotkey-cycle-tiling-mode-backward', prop: 'cycleBackward', name: 'gtile-cycle-tiling-mode-backward', action: 'cycle-backward' },
+    { settingKey: 'hotkey-focus-column-left', prop: 'focusLeft', name: 'gtile-focus-column-left', action: 'focus-left' },
+    { settingKey: 'hotkey-focus-column-right', prop: 'focusRight', name: 'gtile-focus-column-right', action: 'focus-right' },
+    { settingKey: 'hotkey-move-column-left', prop: 'moveLeft', name: 'gtile-move-column-left', action: 'move-left' },
+    { settingKey: 'hotkey-move-column-right', prop: 'moveRight', name: 'gtile-move-column-right', action: 'move-right' },
+    { settingKey: 'hotkey-open-settings', prop: 'openSettings', name: 'gtile-open-settings', action: 'open-settings' },
+];
+// Bumped on every enable() AND disable(). Long-lived callbacks that
+// survive teardown (per-window 'unmanaging' closures, pending idle/
+// timeout callbacks) capture the generation current when they were
+// created and bail out if it no longer matches - otherwise windows
+// tiled before a disable would keep re-tiling their siblings on close
+// forever, against state maps from a dead enable() scope.
+let enableGeneration = 0;
 let extension_metadata;
 let app;
 const platform = {
@@ -1981,64 +2218,119 @@ const init = (meta) => {
     imports.gi.Gtk.IconTheme.get_default().append_search_path(extension_metadata.path + "/../icons");
 };
 const enable = () => {
+    enableGeneration += 1;
+    const thisGeneration = enableGeneration;
     app = new App(platform);
-        monitorChangedSignal = Main.layoutManager.connect('monitors-changed', () => {
-            app.destroy();
-            app = new App(platform);
-            // Per-monitor:workspace keys below would otherwise reference
-            // monitor indices that no longer mean anything once the set
-            // of monitors changes.
-            traditionalTilingState.clear();
-            traditionalFullState.clear();
-            pendingPreMaximizeRect.clear();
-            gapMaximizedState.clear();
-            nativeRestoreTarget.clear();
-        });
+    monitorChangedSignal = Main.layoutManager.connect('monitors-changed', () => {
+        app.destroy();
+        app = new App(platform);
+        // The recreated App brings a fresh Config/ExtensionSettings
+        // instance - rebind the auto-tile targets onto it (see
+        // bindAutoTileSettings below).
+        bindAutoTileSettings();
+        // Per-monitor:workspace keys below would otherwise reference
+        // monitor indices that no longer mean anything once the set
+        // of monitors changes.
+        traditionalTilingState.clear();
+        traditionalFullState.clear();
+        scrollableTilingState.clear();
+        pendingPreMaximizeRect.clear();
+        gapMaximizedState.clear();
+        nativeRestoreTarget.clear();
+    });
 
     // --- Auto-tile mode: a settings-panel combobox (see
-    // settings-schema.json's "tiling-mode" entry) with four values -
-    // "off" (nothing automatic, only the manual "Tile with gaps N"
-    // hotkeys), "rules" (tile-rules.json matching, the default),
+    // settings-schema.json's "tiling-mode" entry) with five values -
+    // "off" (the schema default - nothing automatic, only the manual
+    // "Tile with gaps N" hotkeys), "rules" (tile-rules.json matching),
     // "traditional" (bypasses tile-rules.json entirely and sweeps every
     // new window into a binary-tree dynamic-tiling cycle instead, capped
-    // at 3 windows), or "traditional-full" (the same tree, uncapped -
+    // at 3 windows), "traditional-full" (the same tree, uncapped -
     // see treeInsert/treeRemove above and their own comments for the
-    // tree itself). Bound onto its own small object rather than the App
-    // class, since this whole feature lives in the standalone
-    // window-created handler below, not inside App.
+    // tree itself), or "scrollable" (a Niri-style scrolling column
+    // strip - see the embedded scrollable-tiling.js block above for
+    // the pure logic and the scrollable helpers below for the
+    // Meta-touching layer; the marker comments around that block are
+    // load-bearing for tests/check-sync.sh, so prose here says
+    // "embedded block", never the literal marker text, which the
+    // extraction matches line-by-line). Bound onto small standalone
+    // target objects rather
+    // than the App class, since this whole feature lives in the
+    // standalone window-created handler below, not inside App.
     //
     // maximize-with-gaps (see settings-schema.json's "maximize-with-gaps"
     // entry) is an opt-in checkbox, independent of tiling-mode above -
-    // applies no matter which tiling mode is selected. Bound onto its own
-    // separate target object too, for the same reason.
+    // applies no matter which tiling mode is selected.
     //
-    // Both bound onto ONE shared ExtensionSettings instance via
-    // bindWithObject (not two separate `new Settings.ExtensionSettings(
-    // ..., 'gTile@OhMyDebn')` calls, one per target object) - live-
+    // Both keys are bound through the ONE ExtensionSettings instance
+    // Config already owns (app.config.settings) - never a second
+    // `new Settings.ExtensionSettings(..., 'gTile@OhMyDebn')`. Live-
     // confirmed on Cinnamon 6.6.9 that two ExtensionSettings instances
     // for the SAME extension UUID silently collide:
     // Main.settingsManager.register(uuid, instanceId, obj) stores
-    // exactly one object per (uuid, instanceId), so the second
+    // exactly one object per (uuid, instanceId), so a second
     // construction overwrites the first in that registry, and only the
     // surviving (last-registered) instance ever receives live setting-
     // changed updates afterward - the other is frozen at whatever value
     // it had at construction time until the extension is fully reloaded.
-    // Confirmed live: on that Cinnamon version, changing "Automatic
-    // tiling" (bound via the first, orphaned instance) silently had no
-    // effect until a restart, while "Maximize with gaps" (bound via the
-    // second, surviving instance) worked immediately - swapping
-    // construction order moved which setting was affected, confirming
-    // the collision rather than a per-key issue. Not reproducible on
-    // every Cinnamon build (older ones have an additional per-instance
-    // file-watcher fallback that masks this exact collision), which is
-    // why this went unnoticed until tested on a Cinnamon version without
-    // it - but a single shared instance is correct regardless of which
-    // fallback a given Cinnamon build happens to have.
+    // (Not reproducible on every Cinnamon build - older ones have an
+    // additional per-instance file-watcher fallback that masks the
+    // collision - but a single shared instance is correct regardless.)
+    // Config.destroy() finalizes its instance, so the monitors-changed
+    // recreate above deregisters the old one before the new Config
+    // registers, and bindAutoTileSettings re-attaches these targets to
+    // the survivor.
     const tilingModeSettingsTarget = {};
     const maximizeWithGapsSettingsTarget = {};
-    const gtileAutoTileSettings = new Settings.ExtensionSettings({}, 'gTile@OhMyDebn');
-    gtileAutoTileSettings.bindWithObject(tilingModeSettingsTarget, 'tiling-mode', 'mode', null, null);
-    gtileAutoTileSettings.bindWithObject(maximizeWithGapsSettingsTarget, 'maximize-with-gaps', 'enabled', null, null);
+    const scrollableSettingsTarget = {};
+
+    // Tiling hotkeys (mode cycling + scrollable column navigation),
+    // registered by the extension itself through Cinnamon's
+    // keybindingManager - the same mechanism as the main overlay
+    // hotkey - so they ship with the extension and are editable in
+    // its settings UI (Hotkeys tab), with no external keybinding
+    // setup needed. The action implementations (cycleTilingMode,
+    // scrollableColumnAction) are defined further down in this scope;
+    // the closures below only evaluate them at keypress time, long
+    // after enable() has finished. Column keys outside scrollable
+    // mode, or with a focused window that isn't in a strip, are
+    // silent no-ops. The GTILE_HOTKEYS table itself lives at module
+    // scope, shared with disable()'s removal loop.
+    const gtileHotkeysTarget = {};
+    const rebindGtileHotkeys = () => {
+        for (const hotkey of GTILE_HOTKEYS) {
+            Main.keybindingManager.removeHotKey(hotkey.name);
+            const binding = gtileHotkeysTarget[hotkey.prop];
+            // A binding cleared in the settings UI disables that hotkey.
+            if (typeof binding === 'string' && binding.length > 0) {
+                Main.keybindingManager.addHotKey(hotkey.name, binding, () => {
+                    try {
+                        if (hotkey.action === 'cycle-forward' || hotkey.action === 'cycle-backward') {
+                            cycleTilingMode(hotkey.action === 'cycle-forward' ? 1 : -1);
+                        } else if (hotkey.action === 'open-settings') {
+                            openSettingsWindow();
+                        } else {
+                            scrollableColumnAction(hotkey.action);
+                        }
+                    } catch (e) {
+                        global.log('gTile: hotkey ' + hotkey.name + ' failed: ' + e);
+                    }
+                });
+            }
+        }
+    };
+
+    const bindAutoTileSettings = () => {
+        app.config.settings.bindWithObject(tilingModeSettingsTarget, 'tiling-mode', 'mode', null, null);
+        app.config.settings.bindWithObject(maximizeWithGapsSettingsTarget, 'maximize-with-gaps', 'enabled', null, null);
+        app.config.settings.bindWithObject(scrollableSettingsTarget, 'scrollable-column-width', 'columnWidthPercent', null, null);
+        app.config.settings.bindWithObject(scrollableSettingsTarget, 'scroll-animation-duration', 'scrollDurationMs', null, null);
+        for (const hotkey of GTILE_HOTKEYS) {
+            app.config.settings.bindWithObject(gtileHotkeysTarget, hotkey.settingKey, hotkey.prop, rebindGtileHotkeys, null);
+        }
+    };
+    bindAutoTileSettings();
+    rebindGtileHotkeys();
 
     // Map from "monitorIndex:workspaceIndex" to a binary tiling tree's
     // state ({ root, insertionLeaf, leafCount } - see treeInsert/
@@ -2056,9 +2348,15 @@ const enable = () => {
     // for the full explanation): pendingPreMaximizeRect holds each
     // window's rect from just before its current maximize transition
     // (captured on 'size-change', consumed on 'size-changed');
-    // gapMaximizedState holds the rect to restore to for windows
-    // currently gap-maximized, so a second maximize trigger can be
-    // rerouted into a true restore instead of re-applying gaps.
+    // gapMaximizedState holds { restore, gapped } per gap-maximized
+    // window - `restore` is the rect to go back to, `gapped` the rect
+    // the gap-maximize actually produced (captured just after applying
+    // it), so a second maximize trigger can tell "still exactly where
+    // we put it" (reroute into a true restore) from "moved/resized by
+    // the user since" (treat as a fresh maximize and re-apply gaps).
+    // All three maps are pruned when a window is destroyed (see the
+    // window_manager 'destroy' hook below) so closed windows' ids don't
+    // accumulate for the whole session.
     const pendingPreMaximizeRect = new Map();
     const gapMaximizedState = new Map();
 
@@ -2081,6 +2379,320 @@ const enable = () => {
     // to run when that checkbox is off.
     const nativeRestoreTarget = new Map();
 
+    // Every tiling action this extension performs starts by resetting
+    // (unmaximizing) the window - clear that window's maximize-tracking
+    // entries at that moment, so the size-changed handlers below can't
+    // act on state from a maximize that this tile has just superseded
+    // (see set_prune_window_state_hook's own comment in utils for the
+    // exact failure this prevents). The closure captures these Maps
+    // directly, so it stays correct across the monitors-changed
+    // clear() calls above.
+    set_prune_window_state_hook((win) => {
+        const id = win.get_id();
+        pendingPreMaximizeRect.delete(id);
+        gapMaximizedState.delete(id);
+        nativeRestoreTarget.delete(id);
+    });
+
+    // Windows that have started unmanaging. Marked SYNCHRONOUSLY at the
+    // top of every per-window 'unmanaging' hook below - before any
+    // deferred (idle) work can possibly run - and consulted by every
+    // rebalance/re-layout before touching a window. Live-confirmed
+    // necessary: closing several tracked windows at once (one pkill of
+    // two strip windows) had window A's deferred removal re-layout
+    // window B while B was itself already mid-unmanage, and a geometry
+    // call on a window in that state dies in
+    // meta_window_get_workspaces ("code should not be reached") - a
+    // native g_error abort that takes down all of Cinnamon and that no
+    // JS try/catch can intercept. GLib drains pending events (both
+    // windows' unmanaging emissions) before dispatching idles, so the
+    // synchronous mark is reliably visible to every deferred callback.
+    // Entries are dropped in the window_manager 'destroy' hook below,
+    // alongside the per-window map pruning.
+    const dyingWindows = new Set();
+
+    // Windows created but not yet through their hide-until-first-frame
+    // placement (see hideNewWindowThenPlace below, which adds/removes
+    // entries itself). The mirror image of dyingWindows: touching a
+    // BRAND-NEW window from another window's re-layout dies in the
+    // same meta_window_get_workspaces native abort as touching a dying
+    // one - live-confirmed by launching two windows simultaneously in
+    // scrollable mode: the second window's insert re-layouts the strip
+    // and moved the first window milliseconds after its creation,
+    // before its workspace assignment settled, killing Cinnamon.
+    // Re-layouts skip settling windows entirely; a scrollable settling
+    // window still lands correctly because its own deferred placement
+    // re-reads the CURRENT strip state at settle time (the
+    // resolvePlacement callback) rather than using creation-time
+    // coordinates.
+    const settlingWindows = new Set();
+
+    // --- Scrollable tiling state and helpers (tiling-mode
+    // "scrollable"): one strip per monitor+workspace, same keying as
+    // the tree modes' Maps above. Each state is
+    // { columns, firstVisible, monitorIndex } - `columns` is the
+    // ordered array of Meta.Windows (one column each), `firstVisible`
+    // the viewport's leftmost column index, `monitorIndex` the monitor
+    // the strip was created on (kept in the state because later events
+    // - focus changes, DBus calls, unmanaging - arrive with only the
+    // window in hand). The pure strip logic lives in the embedded
+    // scrollable-tiling.js block above; these helpers are the thin
+    // Meta-touching layer, defined before the DBus block below because
+    // its column-navigation methods use them too.
+    const scrollableTilingState = new Map();
+
+    const scrollableWidthFraction = () =>
+        columnWidthFraction(scrollableSettingsTarget.columnWidthPercent);
+
+    // Which strip (if any) currently tracks `win`. Linear scan over the
+    // few monitor:workspace entries - windows carry no back-pointer.
+    const scrollableFindWindow = (win) => {
+        for (const [key, state] of scrollableTilingState) {
+            const index = state.columns.indexOf(win);
+            if (index !== -1)
+                return { key: key, state: state, index: index };
+        }
+        return null;
+    };
+
+    // Effective tiling-animation duration in ms right now. The
+    // scroll-animation-duration setting is the knob (0 = disabled -
+    // see normalizeScrollDuration in the embedded scrollable-tiling.js
+    // block above, which also handles unset/garbage values; the key
+    // name predates this covering the tree modes too and is kept for
+    // settings compatibility), except that Cinnamon's system-wide
+    // desktop-effects switch being off forces 0 regardless: someone
+    // who turned off all effects (performance, motion sensitivity)
+    // must not get animations from this extension either. Deliberately
+    // NOT tied to the "Popup animation" checkbox - that governs only
+    // the overlay popup's own tweens.
+    const tilingAnimationDurationMs = () => {
+        try {
+            if (!global.settings.get_boolean('desktop-effects'))
+                return 0;
+        } catch (e) { }
+        return normalizeScrollDuration(scrollableSettingsTarget.scrollDurationMs);
+    };
+
+    // Visual glide for a window that automatic tiling just
+    // repositioned and/or resized: the real window has ALREADY been
+    // moved (WM state is always correct and instant - never animated
+    // per-frame through the constraint solver), so this offsets and
+    // scales the compositor actor back to the window's previous frame
+    // box and tweens both to identity - the window's content stretches
+    // during the tween while the client catches up, the exact same
+    // accepted artifact Hyprland's own default window animations show
+    // during resizes. Scaling is about the actor's top-left (pivot
+    // 0,0) so the frame's corner tracks the translation; for
+    // client-decorated windows the actor origin includes the shadow
+    // inset, which makes the start box off by inset*(scale-1) pixels -
+    // transient, small, and gone by the end of the tween.
+    // removeTweens is scoped to exactly our four properties so a rapid
+    // follow-up re-layout only cancels OUR in-flight animation, never
+    // one of Cinnamon's own effects on that actor.
+    const animateActorFromPrevious = (win, rectBefore, durationMs) => {
+        try {
+            const actor = win.get_compositor_private();
+            if (!actor || isFinalized(actor))
+                return;
+            const rectAfter = win.get_frame_rect();
+            if (rectAfter.width <= 0 || rectAfter.height <= 0)
+                return;
+            const dx = rectBefore.x - rectAfter.x;
+            const dy = rectBefore.y - rectAfter.y;
+            const sx = rectBefore.width / rectAfter.width;
+            const sy = rectBefore.height / rectAfter.height;
+            if (dx === 0 && dy === 0 && sx === 1 && sy === 1)
+                return;
+            const Tweener = imports.ui.tweener;
+            Tweener.removeTweens(actor, 'translation_x', 'translation_y', 'scale_x', 'scale_y');
+            actor.set_pivot_point(0, 0);
+            actor.translation_x = dx;
+            actor.translation_y = dy;
+            actor.scale_x = sx;
+            actor.scale_y = sy;
+            Tweener.addTween(actor, {
+                translation_x: 0,
+                translation_y: 0,
+                scale_x: 1,
+                scale_y: 1,
+                time: durationMs / 1000,
+                transition: 'easeOutQuad',
+                onComplete: () => {
+                    try {
+                        actor.translation_x = 0;
+                        actor.translation_y = 0;
+                        actor.scale_x = 1;
+                        actor.scale_y = 1;
+                    } catch (e) { }
+                },
+            });
+        } catch (e) {
+            global.log('gTile: tiling animation failed: ' + e);
+        }
+    };
+
+    // Re-apply a strip's current layout: visible columns are
+    // unminimized and placed through move_resize_window (so the
+    // usual gap padding applies - a lone full-width column ends up
+    // looking exactly like a gap-maximized window), off-viewport
+    // columns are minimized (the paged-viewport design: fully
+    // offscreen placement isn't safe on X11 - past one monitor's edge
+    // is the next monitor, and Muffin's constraint solver may clamp it
+    // anyway). skipWindow is a brand-new window the caller places
+    // itself via hideNewWindowThenPlace's hide-until-first-frame
+    // sequence.
+    const applyScrollableLayout = (state, skipWindow) => {
+        const lm = imports.ui.main.layoutManager;
+        const monitor = (Number.isInteger(state.monitorIndex) && lm.monitors[state.monitorIndex])
+            ? lm.monitors[state.monitorIndex] : lm.primaryMonitor;
+        const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
+        const animDurationMs = tilingAnimationDurationMs();
+        const layout = stripLayout(state.columns, state.firstVisible, scrollableWidthFraction());
+        for (const entry of layout) {
+            if (entry.window === skipWindow)
+                continue;
+            // A dying or still-settling window must not be touched at
+            // all - see dyingWindows'/settlingWindows' own comments
+            // above (native abort, not a catchable exception). A
+            // settling window's own deferred placement handles it.
+            if (dyingWindows.has(entry.window) || settlingWindows.has(entry.window))
+                continue;
+            try {
+                if (entry.visible) {
+                    const wasMinimized = entry.window.minimized;
+                    if (wasMinimized)
+                        entry.window.unminimize();
+                    // Animate only already-visible windows, and only
+                    // with a non-zero animation duration - a window
+                    // entering the viewport from minimized gets
+                    // Cinnamon's own unminimize effect instead
+                    // (stacking our tween on top of that would fight
+                    // it).
+                    let rectBefore = null;
+                    if (!wasMinimized && animDurationMs > 0) {
+                        try {
+                            rectBefore = entry.window.get_frame_rect();
+                        } catch (e) { }
+                    }
+                    platform.reset_window(entry.window);
+                    platform.move_resize_window(entry.window,
+                        screenX + entry.region.x * screenWidth, screenY,
+                        entry.region.width * screenWidth, screenHeight);
+                    if (rectBefore)
+                        animateActorFromPrevious(entry.window, rectBefore, animDurationMs);
+                }
+                else if (!entry.window.minimized) {
+                    entry.window.minimize();
+                }
+            } catch (e) {
+                global.log('gTile: scrollable layout apply failed: ' + e);
+            }
+        }
+    };
+
+    // The four column-navigation actions, shared verbatim by the
+    // extension's own hotkeys above and the DBus methods below.
+    // Returns null on success - including harmless no-ops like
+    // focusing past the strip's edge, which just stops there like Niri
+    // does - or a human-readable reason string the DBus layer turns
+    // into an error reply (the hotkeys ignore it: a keypress in the
+    // wrong mode should simply do nothing).
+    const scrollableColumnAction = (action) => {
+        if (tilingModeSettingsTarget.mode !== 'scrollable')
+            return 'Not in scrollable tiling mode';
+        const win = getFocusApp();
+        const found = win ? scrollableFindWindow(win) : null;
+        if (!found)
+            return 'Focused window is not in a scrollable strip';
+        const state = found.state;
+        const visibleCount = stripVisibleCount(scrollableWidthFraction());
+        if (action === 'focus-left' || action === 'focus-right') {
+            const target = found.index + (action === 'focus-left' ? -1 : 1);
+            if (target >= 0 && target < state.columns.length &&
+                !dyingWindows.has(state.columns[target])) {
+                const targetWin = state.columns[target];
+                state.firstVisible = scrollToShow(state.firstVisible, target, visibleCount, state.columns.length);
+                applyScrollableLayout(state, null);
+                // activate() both unminimizes and focuses; the focus
+                // handler further down then sees an already-correct
+                // viewport. global.get_current_time() is 0 outside an
+                // input event (the DBus path) - a timestamp-0
+                // activation draws a "Buggy client" WM warning and can
+                // trip focus-stealing prevention, so fetch a real
+                // timestamp when needed.
+                let activateTime = global.get_current_time();
+                if (!activateTime)
+                    activateTime = global.display.get_current_time_roundtrip();
+                targetWin.activate(activateTime);
+            }
+            return null;
+        }
+        const moved = stripMoveColumn(state.columns, win, action === 'move-left' ? -1 : 1);
+        // Same-reference return means a no-op (the column is already
+        // at the strip's edge) - stripMoveColumn guarantees that
+        // contract precisely so callers can skip the re-layout churn.
+        if (moved === state.columns)
+            return null;
+        state.columns = moved;
+        state.firstVisible = scrollToShow(state.firstVisible, state.columns.indexOf(win), visibleCount, state.columns.length);
+        applyScrollableLayout(state, null);
+        return null;
+    };
+
+    // Cycle the tiling-mode setting (Super+L / Super+Shift+L by
+    // default, plus the CycleTilingMode DBus method) - the cycle order
+    // itself is the pure, tested nextTilingMode in the embedded
+    // scrollable-tiling.js block above. Written through
+    // settings.setValue so the settings UI's combobox stays in sync,
+    // and announced via Cinnamon's volume-style OSD: a mode switch
+    // deliberately never re-tiles existing windows (they stay in
+    // whatever strip/tree they're in - long-standing design), so
+    // without the OSD a press would look like it did nothing.
+    const TILING_MODE_OSD_LABELS = {
+        'off': 'Off',
+        'rules': 'Rule-based',
+        'traditional': 'Traditional (3 windows)',
+        'traditional-full': 'Traditional (unlimited)',
+        'scrollable': 'Scrollable',
+    };
+    const cycleTilingMode = (direction) => {
+        const next = nextTilingMode(tilingModeSettingsTarget.mode, direction);
+        try {
+            app.config.settings.setValue('tiling-mode', next);
+        } catch (e) {
+            global.log('gTile: failed to set tiling-mode: ' + e);
+            return;
+        }
+        // The bound target updates via the settings change signal, but
+        // not necessarily synchronously - reflect the change now so a
+        // rapid second press cycles from the right place.
+        tilingModeSettingsTarget.mode = next;
+        try {
+            const Gio = imports.gi.Gio;
+            Main.osdWindowManager.show(-1, Gio.ThemedIcon.new('view-grid-symbolic'),
+                'Tiling: ' + (TILING_MODE_OSD_LABELS[next] || next), null);
+        } catch (e) {
+            // The OSD is feedback, not function - never let it break
+            // the actual mode switch.
+            global.log('gTile: tiling-mode OSD failed: ' + e);
+        }
+    };
+
+    // Open this extension's own settings window, landing on the
+    // Behavior tab (-t 1) - that's where the live-tweakable tiling
+    // settings (mode, column width, animation duration) sit, with the
+    // other tabs one click away. xlet-settings is Cinnamon's standard
+    // per-xlet configuration tool; UUID is the shared constant from
+    // utils.
+    const openSettingsWindow = () => {
+        try {
+            imports.misc.util.spawnCommandLine('xlet-settings extension ' + UUID + ' -t 1');
+        } catch (e) {
+            global.log('gTile: failed to open settings window: ' + e);
+        }
+    };
+
     // --- DBus control export: allow external scripts to tile the focused window ---
     try {
         const Gio = imports.gi.Gio;
@@ -2095,6 +2707,13 @@ const enable = () => {
                   <arg type="i" name="colSpan" direction="in"/>
                   <arg type="i" name="rowSpan" direction="in"/>
                 </method>
+                <method name="FocusColumnLeft"/>
+                <method name="FocusColumnRight"/>
+                <method name="MoveColumnLeft"/>
+                <method name="MoveColumnRight"/>
+                <method name="CycleTilingMode">
+                  <arg type="i" name="direction" direction="in"/>
+                </method>
               </interface>
             </node>`;
         const nodeInfo = Gio.DBusNodeInfo.new_for_xml(IFACE_XML);
@@ -2103,6 +2722,46 @@ const enable = () => {
         // Build a proper vtable object with a method_call function (don't use new Gio.DBusInterfaceVTable)
         const vtable = {
             method_call: function (connection, sender, objectPath, interfaceName, methodName, params, invocation) {
+                // Scrollable-tiling column navigation (no arguments,
+                // act on the focused window's strip) - thin wrappers
+                // over scrollableColumnAction above, which the
+                // extension's own configurable hotkeys drive too; this
+                // DBus surface remains for external scripting, the
+                // same pattern TileFocusedWindow serves for grid
+                // tiling.
+                if (methodName === 'FocusColumnLeft' || methodName === 'FocusColumnRight' ||
+                    methodName === 'MoveColumnLeft' || methodName === 'MoveColumnRight') {
+                    try {
+                        const action = {
+                            FocusColumnLeft: 'focus-left',
+                            FocusColumnRight: 'focus-right',
+                            MoveColumnLeft: 'move-left',
+                            MoveColumnRight: 'move-right',
+                        }[methodName];
+                        const failure = scrollableColumnAction(action);
+                        if (failure) {
+                            invocation.return_dbus_error("org.gTile.Control.Error", failure);
+                            return;
+                        }
+                        invocation.return_value(GLib.Variant.new('()', []));
+                    } catch (e) {
+                        invocation.return_dbus_error("org.gTile.Control.Error", String(e));
+                    }
+                    return;
+                }
+                // Cycle the tiling mode (direction >= 0 forward,
+                // negative backward) - same action the Super+L /
+                // Super+Shift+L hotkeys drive, OSD included.
+                if (methodName === 'CycleTilingMode') {
+                    try {
+                        const direction = params.deep_unpack()[0];
+                        cycleTilingMode(direction < 0 ? -1 : 1);
+                        invocation.return_value(GLib.Variant.new('()', []));
+                    } catch (e) {
+                        invocation.return_dbus_error("org.gTile.Control.Error", String(e));
+                    }
+                    return;
+                }
                 if (methodName !== 'TileFocusedWindow') {
                     invocation.return_dbus_error("org.gTile.Control.Error", "Unknown method");
                     return;
@@ -2113,20 +2772,20 @@ const enable = () => {
                     const nbRows = args[1];
                     const colIndex = args[2];
                     const rowIndex = args[3];
-                    const colSpan = (args.length >= 5 && Number.isInteger(args[4]) && args[4] > 0) ? args[4] : 1;
-                    const rowSpan = (args.length >= 6 && Number.isInteger(args[5]) && args[5] > 0) ? args[5] : 1;
 
-                    // cols/rows feed a division below (screenWidth / nbCols)
-                    // - 0 (or negative) produces Infinity/NaN geometry that
-                    // flows straight into a native Meta window-resize call,
-                    // which this session's own crash debugging established
-                    // is not something a JS try/catch can protect against.
-                    // colSpan/rowSpan already get this same guard a few
-                    // lines up; cols/rows/colIndex/rowIndex didn't.
-                    if (nbCols <= 0 || nbRows <= 0 || colIndex < 0 || rowIndex < 0) {
+                    // Rejects grids/indexes that would divide by zero
+                    // (Infinity/NaN geometry straight into a native
+                    // Meta resize call, not catchable from JS) or place
+                    // the window arbitrarily far offscreen; clamps
+                    // spans to the grid's far edge. See tile-rules.js
+                    // for the details and the unit tests.
+                    const spans = validateTileArgs(nbCols, nbRows, colIndex, rowIndex, args[4], args[5]);
+                    if (!spans) {
                         invocation.return_dbus_error("org.gTile.Control.Error", "Invalid grid arguments");
                         return;
                     }
+                    const colSpan = spans.colSpan;
+                    const rowSpan = spans.rowSpan;
 
                     // Pick the focused window at the time of the DBus call to avoid stale references.
                     const win = getFocusApp();
@@ -2170,13 +2829,11 @@ const enable = () => {
 
                     const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
 
-                    const widthUnit = Math.floor(screenWidth / nbCols);
-                    const heightUnit = Math.floor(screenHeight / nbRows);
-
-                    const areaX = screenX + (colIndex * widthUnit);
-                    const areaY = screenY + (rowIndex * heightUnit);
-                    const areaWidth = widthUnit * colSpan;
-                    const areaHeight = heightUnit * rowSpan;
+                    // Same tested grid math the rule-based auto-tile
+                    // path uses - not a local reimplementation that
+                    // could drift from it.
+                    const [areaX, areaY, areaWidth, areaHeight] =
+                        computeGridRect(screenX, screenY, screenWidth, screenHeight, nbCols, nbRows, colIndex, rowIndex, colSpan, rowSpan);
 
                     platform.reset_window(win);
                     platform.move_resize_window(win, areaX, areaY, areaWidth, areaHeight);
@@ -2198,9 +2855,9 @@ const enable = () => {
                 Gio.BusType.SESSION,
                 'org.gTile.Control',
                 Gio.BusNameOwnerFlags.NONE,
-                (connection, name) => { global.log('gTile: D-Bus acquired for ' + name); },
-                (connection, name) => { global.log('gTile: Acquired well-known name ' + name); },
-                (connection, name) => { global.log('gTile: Lost well-known name ' + name); }
+                (connection, name) => { global.log('gTile: session bus connection acquired (' + name + ')'); },
+                (connection, name) => { global.log('gTile: acquired well-known name ' + name); },
+                (connection, name) => { global.log('gTile: lost well-known name ' + name); }
             );
         } catch (e) {
             global.log('gTile: bus_own_name not available: ' + e);
@@ -2226,13 +2883,27 @@ const enable = () => {
     try {
         const TILE_RULES_PATH = '/usr/share/ohmydebn/config/tile-rules.json';
 
+        // Parse cached against the file's mtime, so the per-window-
+        // created lookups don't re-read and re-parse unchanged JSON.
+        let tileRulesCache = null;
         const loadTileRules = () => {
             try {
-                const file = imports.gi.Gio.File.new_for_path(TILE_RULES_PATH);
+                const Gio = imports.gi.Gio;
+                const file = Gio.File.new_for_path(TILE_RULES_PATH);
+                // Include the microsecond part - with seconds alone,
+                // two edits landing inside the same second would keep
+                // serving the first edit's stale parse.
+                const info = file.query_info('time::modified,time::modified-usec', Gio.FileQueryInfoFlags.NONE, null);
+                const mtime = info.get_attribute_uint64('time::modified') * 1000000 +
+                    info.get_attribute_uint32('time::modified-usec');
+                if (tileRulesCache && tileRulesCache.mtime === mtime)
+                    return tileRulesCache.rules;
                 const [ok, contents] = file.load_contents(null);
                 if (!ok) return [];
                 const parsed = JSON.parse(imports.byteArray.toString(contents));
-                return Array.isArray(parsed) ? parsed : [];
+                const rules = Array.isArray(parsed) ? parsed : [];
+                tileRulesCache = { mtime: mtime, rules: rules };
+                return rules;
             } catch (e) {
                 return [];
             }
@@ -2304,20 +2975,67 @@ const enable = () => {
         // hide it until, and seeing it move is the expected, real
         // tiling-WM behavior in that case, not the flash bug this hide/
         // reveal dance exists to prevent.
-        const hideNewWindowThenPlace = (win, areaX, areaY, areaWidth, areaHeight) => {
+        // resolvePlacement (optional): called at settle time (first
+        // frame) instead of trusting the creation-time rect, for modes
+        // whose layout can change while this window is still hidden
+        // (scrollable: a second window launched an instant later
+        // reshuffles the strip before the first ever painted). Returns
+        // { rect: [x, y, w, h] } to place there, { minimize: true } if
+        // the window's spot has scrolled off-viewport meanwhile, or
+        // null to leave the window untouched (e.g. no longer tracked).
+        const hideNewWindowThenPlace = (win, areaX, areaY, areaWidth, areaHeight, resolvePlacement) => {
+            // Blocks other windows' re-layouts from touching this
+            // still-settling window - see settlingWindows' own comment
+            // above. Removed on every exit path below (apply, failsafe,
+            // stale generation).
+            settlingWindows.add(win);
             const applyTileThenReveal = (actor) => {
-                try {
-                    platform.reset_window(win);
-                    platform.move_resize_window(win, areaX, areaY, areaWidth, areaHeight);
-                } catch (e) {
-                    global.log('gTile: auto-tile apply failed: ' + e);
+                // The extension may have been disabled (or torn down and
+                // re-enabled) while this window was hidden waiting for
+                // its first frame - never leave it invisible, but don't
+                // move it with dead state either.
+                settlingWindows.delete(win);
+                if (thisGeneration !== enableGeneration) {
+                    try { actor.opacity = 255; } catch (e) { }
+                    return;
+                }
+                let rect = [areaX, areaY, areaWidth, areaHeight];
+                let minimizeInstead = false;
+                if (resolvePlacement) {
+                    try {
+                        const placement = resolvePlacement();
+                        if (!placement) {
+                            rect = null;
+                        } else if (placement.minimize) {
+                            rect = null;
+                            minimizeInstead = true;
+                        } else {
+                            rect = placement.rect;
+                        }
+                    } catch (e) {
+                        global.log('gTile: auto-tile placement resolve failed: ' + e);
+                    }
+                }
+                if (rect) {
+                    try {
+                        platform.reset_window(win);
+                        platform.move_resize_window(win, rect[0], rect[1], rect[2], rect[3]);
+                    } catch (e) {
+                        global.log('gTile: auto-tile apply failed: ' + e);
+                    }
                 }
                 // Same settle delay ohmydebn-gtile-apply already uses
                 // after its own gdbus tile call, to outlast Cinnamon's
                 // resize/move animation before revealing.
                 imports.gi.GLib.timeout_add(imports.gi.GLib.PRIORITY_DEFAULT, 150, () => {
                     try {
+                        // Opacity is restored even on the minimize
+                        // path - a window minimized while still at
+                        // opacity 0 would come back invisible when
+                        // later unminimized.
                         actor.opacity = 255;
+                        if (minimizeInstead && !win.minimized)
+                            win.minimize();
                     } catch (e) {
                         global.log('gTile: auto-tile reveal failed: ' + e);
                     }
@@ -2327,9 +3045,25 @@ const enable = () => {
 
             const hideThenWaitForFirstFrame = (actor) => {
                 actor.opacity = 0;
+                let handled = false;
                 const firstFrameId = actor.connect('first-frame', () => {
+                    if (handled) return;
+                    handled = true;
                     actor.disconnect(firstFrameId);
                     applyTileThenReveal(actor);
+                });
+                // Failsafe: if first-frame never fires (window destroyed
+                // mid-map, or a client that never paints), reveal the
+                // window untiled rather than leaving it permanently
+                // invisible at opacity 0.
+                imports.gi.GLib.timeout_add(imports.gi.GLib.PRIORITY_DEFAULT, 2000, () => {
+                    if (!handled) {
+                        handled = true;
+                        settlingWindows.delete(win);
+                        try { actor.disconnect(firstFrameId); } catch (e) { }
+                        try { actor.opacity = 255; } catch (e) { }
+                    }
+                    return imports.gi.GLib.SOURCE_REMOVE;
                 });
             };
 
@@ -2340,16 +3074,59 @@ const enable = () => {
                 // The compositor actor isn't created yet at
                 // window-created time (uncommon but not guaranteed
                 // otherwise) - poll on idle until it exists, hiding it
-                // the instant it does, same as above.
+                // the instant it does, same as above. Capped: for a
+                // window destroyed right after creation the actor never
+                // appears, and an unconditional SOURCE_CONTINUE idle
+                // callback would spin the main loop at full CPU forever.
+                let attempts = 0;
                 imports.gi.GLib.idle_add(imports.gi.GLib.PRIORITY_DEFAULT, () => {
+                    if (thisGeneration !== enableGeneration) {
+                        settlingWindows.delete(win);
+                        return imports.gi.GLib.SOURCE_REMOVE;
+                    }
                     const actor = win.get_compositor_private();
                     if (actor) {
                         hideThenWaitForFirstFrame(actor);
                         return imports.gi.GLib.SOURCE_REMOVE;
                     }
+                    attempts += 1;
+                    if (attempts >= 100) {
+                        settlingWindows.delete(win);
+                        return imports.gi.GLib.SOURCE_REMOVE;
+                    }
                     return imports.gi.GLib.SOURCE_CONTINUE;
                 });
             }
+        };
+
+        // Shared by every dynamic-tiling window-created handler below:
+        // which monitor, and which per-"monitorIndex:workspaceIndex"
+        // state-map key, a brand-new window belongs to.
+        // win.get_workspace() crashed Cinnamon outright on the very
+        // first window of a session (confirmed live: "no windows,
+        // press Super+Return" -> mutter:ERROR:...
+        // meta_window_get_workspaces: code should not be reached,
+        // a native g_error() abort, not a catchable JS exception - a
+        // brand new window's own workspace assignment isn't settled
+        // yet at window-created time, same class of "not everything
+        // is initialized yet" issue resolveMonitor above already has
+        // a documented fallback for on the monitor side). Asking the
+        // workspace manager for the currently active workspace
+        // instead sidesteps that call path entirely, and is exactly
+        // where a brand new window ends up in normal use anyway.
+        const resolveMonitorAndKey = (win) => {
+            const monitor = resolveMonitor(win);
+            const monitorIndex = typeof monitor.index === 'number' ? monitor.index : 0;
+            let workspaceIndex = 0;
+            try {
+                const activeWorkspace = global.workspace_manager.get_active_workspace();
+                if (activeWorkspace && typeof activeWorkspace.index === 'function') {
+                    workspaceIndex = activeWorkspace.index();
+                }
+            } catch (e) {
+                global.log('gTile: active-workspace lookup failed: ' + e);
+            }
+            return { monitor: monitor, monitorIndex: monitorIndex, key: monitorIndex + ':' + workspaceIndex };
         };
 
         // Shared window-created handler for both dynamic-tiling modes -
@@ -2359,30 +3136,7 @@ const enable = () => {
         // for "Traditional Full" (uncapped) - the only difference between
         // the two modes, since they share the exact same tree.
         const handleTreeTilingWindowCreated = (win, stateMap, maxLeaves) => {
-            const monitor = resolveMonitor(win);
-            const monitorIndex = typeof monitor.index === 'number' ? monitor.index : 0;
-            // win.get_workspace() crashed Cinnamon outright on the very
-            // first window of a session (confirmed live: "no windows,
-            // press Super+Return" -> mutter:ERROR:...
-            // meta_window_get_workspaces: code should not be reached,
-            // a native g_error() abort, not a catchable JS exception - a
-            // brand new window's own workspace assignment isn't settled
-            // yet at window-created time, same class of "not everything
-            // is initialized yet" issue resolveMonitor above already has
-            // a documented fallback for on the monitor side). Asking the
-            // workspace manager for the currently active workspace
-            // instead sidesteps that call path entirely, and is exactly
-            // where a brand new window ends up in normal use anyway.
-            let workspaceIndex = 0;
-            try {
-                const activeWorkspace = global.workspace_manager.get_active_workspace();
-                if (activeWorkspace && typeof activeWorkspace.index === 'function') {
-                    workspaceIndex = activeWorkspace.index();
-                }
-            } catch (e) {
-                global.log('gTile: tree-tiling active-workspace lookup failed: ' + e);
-            }
-            const key = monitorIndex + ':' + workspaceIndex;
+            const { monitor, key } = resolveMonitorAndKey(win);
 
             const prevState = stateMap.get(key) || { root: null, insertionLeaf: null, leafCount: 0 };
             const result = treeInsert(prevState, win, maxLeaves);
@@ -2396,10 +3150,31 @@ const enable = () => {
                 region.height * screenHeight,
             ];
             const applyMove = (move, logPrefix) => {
+                // A dying or still-settling window must not be touched
+                // at all - see dyingWindows'/settlingWindows' own
+                // comments above (native abort, not a catchable
+                // exception).
+                if (dyingWindows.has(move.window) || settlingWindows.has(move.window))
+                    return;
                 try {
                     const [x, y, w, h] = rectForRegion(move.region);
+                    // Same glide the scrollable mode uses (see
+                    // animateActorFromPrevious above) - tree splits and
+                    // rebalances are mostly resizes, which it handles
+                    // via actor scaling, matching Hyprland's own
+                    // animated dwindle behavior this mode is modeled
+                    // on.
+                    const animDurationMs = tilingAnimationDurationMs();
+                    let rectBefore = null;
+                    if (animDurationMs > 0) {
+                        try {
+                            rectBefore = move.window.get_frame_rect();
+                        } catch (e) { }
+                    }
                     platform.reset_window(move.window);
                     platform.move_resize_window(move.window, x, y, w, h);
+                    if (rectBefore)
+                        animateActorFromPrevious(move.window, rectBefore, animDurationMs);
                 } catch (e) {
                     global.log('gTile: ' + logPrefix + ' failed: ' + e);
                 }
@@ -2445,7 +3220,27 @@ const enable = () => {
             const ownLeaf = result.insertionLeaf;
             try {
                 win.connect('unmanaging', () => {
+                    // Synchronously, before any deferred work anywhere
+                    // can run - see dyingWindows' own comment above.
+                    dyingWindows.add(win);
+                    // Delayed self-cleanup for the dying/settling marks
+                    // (NOT done in the window_manager 'destroy' hook -
+                    // see its own comment): by 5s every deferred
+                    // rebalance that could consult the mark has long
+                    // run, and without this the sets would accumulate
+                    // dead-window wrappers for the whole session.
+                    imports.gi.GLib.timeout_add(imports.gi.GLib.PRIORITY_DEFAULT, 5000, () => {
+                        dyingWindows.delete(win);
+                        settlingWindows.delete(win);
+                        return imports.gi.GLib.SOURCE_REMOVE;
+                    });
                     imports.gi.GLib.idle_add(imports.gi.GLib.PRIORITY_DEFAULT, () => {
+                        // This closure outlives the enable() scope it was
+                        // created in (nothing disconnects per-window
+                        // signals on extension disable) - a stale
+                        // generation means the extension was disabled or
+                        // reloaded since, so leave the windows alone.
+                        if (thisGeneration !== enableGeneration) return imports.gi.GLib.SOURCE_REMOVE;
                         const current = stateMap.get(key);
                         if (!current || !current.root) return imports.gi.GLib.SOURCE_REMOVE;
                         // If the capped mode discarded and restarted the
@@ -2475,16 +3270,118 @@ const enable = () => {
             }
         };
 
+        // window-created handler for the "scrollable" mode - the thin
+        // Meta-touching layer over the pure strip logic (the embedded
+        // scrollable-tiling.js block above), structured like
+        // handleTreeTilingWindowCreated: same monitor/workspace
+        // resolution (and the same reasons for it), same deferred,
+        // generation-guarded 'unmanaging' removal.
+        const handleScrollableWindowCreated = (win) => {
+            const { monitor, monitorIndex, key } = resolveMonitorAndKey(win);
+
+            const prev = scrollableTilingState.get(key) || { columns: [], firstVisible: 0, monitorIndex: monitorIndex };
+            // New columns open directly right of the focused window's
+            // column (the Niri rule). At window-created time focus is
+            // still on the previously-focused window; a focused window
+            // that isn't in this strip (or no focus at all) appends at
+            // the end instead.
+            const focused = getFocusApp();
+            const afterIndex = focused ? prev.columns.indexOf(focused) : -1;
+            const columns = stripInsert(prev.columns, win, afterIndex);
+            const newIndex = columns.indexOf(win);
+            const visibleCount = stripVisibleCount(scrollableWidthFraction());
+            const state = {
+                columns: columns,
+                firstVisible: scrollToShow(prev.firstVisible, newIndex, visibleCount, columns.length),
+                monitorIndex: monitorIndex,
+            };
+            scrollableTilingState.set(key, state);
+
+            // Already-placed windows move/minimize directly (visible,
+            // real tiling-WM behavior - see hideNewWindowThenPlace's
+            // own comment); the new window itself goes through the
+            // hide-until-first-frame sequence. Its placement is
+            // resolved from the CURRENT strip state at settle time
+            // (not from coordinates captured now) - another window
+            // launched an instant later can reshuffle the strip before
+            // this one ever paints, and the settlingWindows guard
+            // means nobody else will move it in the meantime.
+            applyScrollableLayout(state, win);
+            const resolvePlacement = () => {
+                const current = scrollableTilingState.get(key);
+                if (!current)
+                    return null;
+                const idx = current.columns.indexOf(win);
+                if (idx === -1)
+                    return null;
+                const entry = stripLayout(current.columns, current.firstVisible, scrollableWidthFraction())[idx];
+                if (!entry.visible)
+                    return { minimize: true };
+                const lm = imports.ui.main.layoutManager;
+                const mon = (Number.isInteger(current.monitorIndex) && lm.monitors[current.monitorIndex])
+                    ? lm.monitors[current.monitorIndex] : lm.primaryMonitor;
+                const [sx, sy, sw, sh] = getUsableScreenArea(mon);
+                return { rect: [sx + entry.region.x * sw, sy, entry.region.width * sw, sh] };
+            };
+            const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
+            hideNewWindowThenPlace(win, screenX, screenY, screenWidth, screenHeight, resolvePlacement);
+
+            // Deferred, generation-guarded removal - identical
+            // reasoning to the tree modes' 'unmanaging' hook above
+            // (geometry operations on other windows are not safe from
+            // directly inside 'unmanaging').
+            try {
+                win.connect('unmanaging', () => {
+                    // Synchronously, before any deferred work anywhere
+                    // can run - see dyingWindows' own comment above.
+                    dyingWindows.add(win);
+                    // Delayed self-cleanup for the dying/settling marks
+                    // (NOT done in the window_manager 'destroy' hook -
+                    // see its own comment): by 5s every deferred
+                    // rebalance that could consult the mark has long
+                    // run, and without this the sets would accumulate
+                    // dead-window wrappers for the whole session.
+                    imports.gi.GLib.timeout_add(imports.gi.GLib.PRIORITY_DEFAULT, 5000, () => {
+                        dyingWindows.delete(win);
+                        settlingWindows.delete(win);
+                        return imports.gi.GLib.SOURCE_REMOVE;
+                    });
+                    imports.gi.GLib.idle_add(imports.gi.GLib.PRIORITY_DEFAULT, () => {
+                        if (thisGeneration !== enableGeneration) return imports.gi.GLib.SOURCE_REMOVE;
+                        const current = scrollableTilingState.get(key);
+                        if (!current) return imports.gi.GLib.SOURCE_REMOVE;
+                        const columns = stripRemove(current.columns, win);
+                        if (columns === current.columns) return imports.gi.GLib.SOURCE_REMOVE;
+                        if (columns.length === 0) {
+                            scrollableTilingState.delete(key);
+                            return imports.gi.GLib.SOURCE_REMOVE;
+                        }
+                        current.columns = columns;
+                        current.firstVisible = scrollToShow(current.firstVisible, null,
+                            stripVisibleCount(scrollableWidthFraction()), columns.length);
+                        // Survivors reclaim the freed viewport space -
+                        // including the lone-column expand back to full
+                        // width when this was the second-to-last window.
+                        applyScrollableLayout(current, null);
+                        return imports.gi.GLib.SOURCE_REMOVE;
+                    });
+                });
+            } catch (e) {
+                global.log('gTile: scrollable unmanaging hook failed: ' + e);
+            }
+        };
+
         windowCreatedSignal = global.display.connect('window-created', (display, win) => {
             try {
                 if (!win || win.minimized || !utils_Main.isInteresting(win)) return;
 
                 // "off": nothing automatic. "traditional"/"traditional-full":
-                // one of the two dynamic cycles. "rules": rule-table
-                // matching below. Anything else - including unset/
-                // unrecognized, e.g. before the settings binding's first
-                // read completes - does nothing, same as "off": that's
-                // the schema's own default, so treating an unknown value
+                // one of the two dynamic tree cycles. "scrollable": the
+                // Niri-style column strip. "rules": rule-table matching
+                // below. Anything else - including unset/unrecognized,
+                // e.g. before the settings binding's first read
+                // completes - does nothing, same as "off": that's the
+                // schema's own default, so treating an unknown value
                 // the same way is the safe choice, not an arbitrary one.
                 if (tilingModeSettingsTarget.mode === 'traditional') {
                     handleTreeTilingWindowCreated(win, traditionalTilingState, 3);
@@ -2492,6 +3389,10 @@ const enable = () => {
                 }
                 if (tilingModeSettingsTarget.mode === 'traditional-full') {
                     handleTreeTilingWindowCreated(win, traditionalFullState, null);
+                    return;
+                }
+                if (tilingModeSettingsTarget.mode === 'scrollable') {
+                    handleScrollableWindowCreated(win);
                     return;
                 }
                 if (tilingModeSettingsTarget.mode !== 'rules') return;
@@ -2514,6 +3415,44 @@ const enable = () => {
         });
     } catch (e) {
         global.log('gTile: failed to connect window-created for auto-tile: ' + e);
+    }
+
+    // --- Scrollable tiling: focus-driven scrolling. Focusing a window
+    // whose column is scrolled out of the viewport (via the window
+    // list, Alt-Tab, or the FocusColumn* DBus methods above - and the
+    // window list/Alt-Tab is also how a minimized, scrolled-away
+    // column comes back without any hotkeys configured) scrolls the
+    // strip so that column is visible again. The re-layout is deferred
+    // to idle rather than run inside the focus notification itself -
+    // same reentrancy caution as the 'unmanaging' handlers above - and
+    // the strip state is re-read fresh inside the idle callback for
+    // the same reason theirs is.
+    try {
+        focusWindowSignal = global.display.connect('notify::focus-window', () => {
+            try {
+                if (tilingModeSettingsTarget.mode !== 'scrollable') return;
+                const win = global.display.focus_window;
+                if (!win || !scrollableFindWindow(win)) return;
+                imports.gi.GLib.idle_add(imports.gi.GLib.PRIORITY_DEFAULT, () => {
+                    if (thisGeneration !== enableGeneration) return imports.gi.GLib.SOURCE_REMOVE;
+                    const found = scrollableFindWindow(win);
+                    if (!found) return imports.gi.GLib.SOURCE_REMOVE;
+                    const state = found.state;
+                    const fv = scrollToShow(state.firstVisible, found.index,
+                        stripVisibleCount(scrollableWidthFraction()), state.columns.length);
+                    // Focus changes constantly - only re-layout when
+                    // the viewport actually has to move.
+                    if (fv === state.firstVisible) return imports.gi.GLib.SOURCE_REMOVE;
+                    state.firstVisible = fv;
+                    applyScrollableLayout(state, null);
+                    return imports.gi.GLib.SOURCE_REMOVE;
+                });
+            } catch (e) {
+                global.log('gTile: scrollable focus handler failed: ' + e);
+            }
+        });
+    } catch (e) {
+        global.log('gTile: failed to connect focus handler for scrollable tiling: ' + e);
     }
 
     // --- Maximize-with-gaps: intercept every native maximize trigger
@@ -2599,6 +3538,17 @@ const enable = () => {
                     if (win.get_maximized() === 0 && nativeRestoreTarget.has(id)) {
                         const target = nativeRestoreTarget.get(id);
                         nativeRestoreTarget.delete(id);
+                        // Skip while a grab is in progress: unmaximizing
+                        // by dragging the titlebar must leave the window
+                        // following the pointer - snapping it back to
+                        // its pre-maximize position would yank it out
+                        // from under the drag.
+                        let grabbed = false;
+                        try {
+                            grabbed = typeof global.display.get_grab_op === 'function' &&
+                                global.display.get_grab_op() !== Meta.GrabOp.NONE;
+                        } catch (e) { }
+                        if (grabbed) return;
                         const r = win.get_frame_rect();
                         if (r.x !== target.x || r.y !== target.y || r.width !== target.width || r.height !== target.height) {
                             platform.move_resize_window_exact(win, target.x, target.y, target.width, target.height);
@@ -2614,20 +3564,32 @@ const enable = () => {
                 // partial/vertical-only maximize is left untouched.
                 if (win.get_maximized() !== (Meta.MaximizeFlags.HORIZONTAL | Meta.MaximizeFlags.VERTICAL)) return;
 
-                if (gapMaximizedState.has(id)) {
+                const prevGapState = gapMaximizedState.get(id);
+                if (prevGapState) {
+                    gapMaximizedState.delete(id);
                     // Second trigger on an already gap-maximized window:
                     // Meta thinks this is a fresh maximize (its own flag
                     // was cleared by our own unmaximize() below last
-                    // time) - re-route into a true restore to the
-                    // ORIGINAL pre-maximize rect instead of re-gapping.
-                    const restoreRect = gapMaximizedState.get(id);
-                    gapMaximizedState.delete(id);
-                    platform.reset_window(win);
-                    // _exact_, not move_resize_window - restoreRect is
-                    // already the window's original size; move_resize_window
-                    // would shrink it further by the gap on top of that.
-                    platform.move_resize_window_exact(win, restoreRect.x, restoreRect.y, restoreRect.width, restoreRect.height);
-                    return;
+                    // time). Only reroute into a restore if the window
+                    // is still exactly where the gap-maximize left it -
+                    // if the user moved or resized it since, this press
+                    // means "maximize again", so fall through and
+                    // re-apply gaps with the new preRect instead.
+                    const g = prevGapState.gapped;
+                    const untouched = !g ||
+                        (Math.abs(preRect.x - g.x) <= 2 &&
+                            Math.abs(preRect.y - g.y) <= 2 &&
+                            Math.abs(preRect.width - g.width) <= 2 &&
+                            Math.abs(preRect.height - g.height) <= 2);
+                    if (untouched) {
+                        const restoreRect = prevGapState.restore;
+                        platform.reset_window(win);
+                        // _exact_, not move_resize_window - restoreRect is
+                        // already the window's original size; move_resize_window
+                        // would shrink it further by the gap on top of that.
+                        platform.move_resize_window_exact(win, restoreRect.x, restoreRect.y, restoreRect.width, restoreRect.height);
+                        return;
+                    }
                 }
 
                 // resolveMonitor above is scoped inside the auto-tile
@@ -2643,9 +3605,48 @@ const enable = () => {
                 platform.reset_window(win);
                 platform.move_resize_window(win, screenX, screenY, screenWidth, screenHeight);
 
-                gapMaximizedState.set(id, preRect);
+                const gapState = { restore: preRect, gapped: null };
+                gapMaximizedState.set(id, gapState);
+                // Capture the rect the gap-maximize actually produced
+                // once it has settled, for the untouched-check above.
+                imports.gi.GLib.idle_add(imports.gi.GLib.PRIORITY_DEFAULT, () => {
+                    if (thisGeneration === enableGeneration) {
+                        try {
+                            const r = win.get_frame_rect();
+                            gapState.gapped = { x: r.x, y: r.y, width: r.width, height: r.height };
+                        } catch (e) { }
+                    }
+                    return imports.gi.GLib.SOURCE_REMOVE;
+                });
             } catch (e) {
                 global.log('gTile: maximize-with-gaps size-changed handler failed: ' + e);
+            }
+        });
+
+        // Prune per-window state when a window goes away - the maps are
+        // keyed by window id, and without this every window ever
+        // maximized leaves its entry behind for the whole session.
+        windowDestroyedSignal = global.window_manager.connect('destroy', (wm, actor) => {
+            try {
+                const win = actor && actor.meta_window;
+                if (!win) return;
+                const id = win.get_id();
+                pendingPreMaximizeRect.delete(id);
+                gapMaximizedState.delete(id);
+                nativeRestoreTarget.delete(id);
+                // dyingWindows/settlingWindows are deliberately NOT
+                // pruned here: window_manager's 'destroy' fires the
+                // instant the destroy animation starts - BETWEEN a
+                // window's 'unmanaging' emission and the deferred
+                // (idle) rebalance that needs to see the dying mark.
+                // Pruning here un-marked the window at exactly the
+                // wrong moment (live-confirmed via debug logging: the
+                // guard saw an empty set milliseconds after the mark
+                // was added, re-layouted the dead sibling, and crashed
+                // Cinnamon). Those two sets clean themselves up on a
+                // delayed timer in the unmanaging hooks instead.
+            } catch (e) {
+                global.log('gTile: window-destroy prune failed: ' + e);
             }
         });
     } catch (e) {
@@ -2653,14 +3654,26 @@ const enable = () => {
     }
 };
 const disable = () => {
-        if (monitorChangedSignal) {
-            try {
-                Main.layoutManager.disconnect(monitorChangedSignal);
-            } catch (e) {
-                global.log('gTile: failed to disconnect monitors-changed: ' + e);
-            }
-            monitorChangedSignal = null;
+    // Invalidate every long-lived callback created by enable() (see
+    // enableGeneration's own comment above).
+    enableGeneration += 1;
+    // Detach reset_window from enable()'s per-window state maps - they
+    // die with this enable() scope.
+    set_prune_window_state_hook(null);
+    // Remove the tiling hotkeys enable() registered.
+    for (const hotkey of GTILE_HOTKEYS) {
+        try {
+            Main.keybindingManager.removeHotKey(hotkey.name);
+        } catch (e) { }
+    }
+    if (monitorChangedSignal) {
+        try {
+            Main.layoutManager.disconnect(monitorChangedSignal);
+        } catch (e) {
+            global.log('gTile: failed to disconnect monitors-changed: ' + e);
         }
+        monitorChangedSignal = null;
+    }
     if (windowCreatedSignal) {
         try {
             global.display.disconnect(windowCreatedSignal);
@@ -2684,6 +3697,22 @@ const disable = () => {
             global.log('gTile: failed to disconnect size-changed: ' + e);
         }
         sizeChangedSignal = null;
+    }
+    if (windowDestroyedSignal) {
+        try {
+            global.window_manager.disconnect(windowDestroyedSignal);
+        } catch (e) {
+            global.log('gTile: failed to disconnect window destroy: ' + e);
+        }
+        windowDestroyedSignal = null;
+    }
+    if (focusWindowSignal) {
+        try {
+            global.display.disconnect(focusWindowSignal);
+        } catch (e) {
+            global.log('gTile: failed to disconnect focus-window: ' + e);
+        }
+        focusWindowSignal = null;
     }
     // unregister DBus object if registered
     try {

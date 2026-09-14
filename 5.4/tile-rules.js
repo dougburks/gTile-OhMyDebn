@@ -13,8 +13,20 @@
 
 function matchTileRule(wmClass, title, rules) {
     for (const rule of rules) {
+        if (!rule) continue;
         if (rule.wmClass !== wmClass) continue;
-        if (rule.titleRegex && !new RegExp(rule.titleRegex).test(title || '')) continue;
+        if (rule.titleRegex) {
+            // A malformed titleRegex in one rule must only disable that
+            // one rule - an uncaught throw here would abort the whole
+            // loop and silently kill rule matching for every window.
+            let titleRe;
+            try {
+                titleRe = new RegExp(rule.titleRegex);
+            } catch (e) {
+                continue;
+            }
+            if (!titleRe.test(title || '')) continue;
+        }
         return rule.grid;
     }
     return null;
@@ -35,4 +47,27 @@ function computeGridRect(screenX, screenY, screenWidth, screenHeight, cols, rows
     const areaWidth = widthUnit * (colSpan > 0 ? colSpan : 1);
     const areaHeight = heightUnit * (rowSpan > 0 ? rowSpan : 1);
     return [areaX, areaY, areaWidth, areaHeight];
+}
+
+// Validates a tile request against its own grid (used by the DBus
+// TileFocusedWindow handler; tile-rules.json requests get their own
+// lighter guard since that file is root-owned). Returns null when the
+// request is invalid - a non-positive grid, or an index outside it,
+// would either divide by zero (Infinity/NaN geometry straight into a
+// native Meta resize call, not catchable from JS) or place the window
+// arbitrarily far offscreen. Otherwise returns { colSpan, rowSpan }:
+// the requested spans with the usual "> 0 integer or fall back to 1"
+// guard applied, then clamped to what actually fits between the index
+// and the grid's far edge.
+function validateTileArgs(cols, rows, colIndex, rowIndex, colSpanRaw, rowSpanRaw) {
+    if (!Number.isInteger(cols) || !Number.isInteger(rows) ||
+        !Number.isInteger(colIndex) || !Number.isInteger(rowIndex))
+        return null;
+    if (cols <= 0 || rows <= 0 ||
+        colIndex < 0 || colIndex >= cols ||
+        rowIndex < 0 || rowIndex >= rows)
+        return null;
+    const colSpan = Math.min((Number.isInteger(colSpanRaw) && colSpanRaw > 0) ? colSpanRaw : 1, cols - colIndex);
+    const rowSpan = Math.min((Number.isInteger(rowSpanRaw) && rowSpanRaw > 0) ? rowSpanRaw : 1, rows - rowIndex);
+    return { colSpan: colSpan, rowSpan: rowSpan };
 }

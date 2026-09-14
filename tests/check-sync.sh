@@ -20,7 +20,10 @@ GTILE_JS="$REPO_ROOT/5.4/gTile.js"
 SYNCED_FILES=(
   tile-rules.js
   traditional-tiling.js
+  scrollable-tiling.js
   screen-area.js
+  gap-math.js
+  tile-labels.js
 )
 
 FAIL=0
@@ -28,8 +31,11 @@ for NAME in "${SYNCED_FILES[@]}"; do
   CANONICAL="$REPO_ROOT/5.4/$NAME"
   # NAME (e.g. "tile-rules.js") gets interpolated into a sed regex below -
   # escape its '.' so it matches a literal dot, not "any character".
+  # The marker match is anchored to the exact full line ("// BEGIN <name>"
+  # at column 0) so an indented prose comment that happens to mention a
+  # marker can't reopen the sed range and swallow the rest of the file.
   NAME_RE="${NAME//./\\.}"
-  EXTRACTED=$(sed -n "/BEGIN $NAME_RE/,/END $NAME_RE/p" "$GTILE_JS" | sed '1d;$d')
+  EXTRACTED=$(sed -n "/^\/\/ BEGIN $NAME_RE\$/,/^\/\/ END $NAME_RE\$/p" "$GTILE_JS" | sed '1d;$d')
   # The canonical file carries its own file-level header comment (not
   # copied into gTile.js, which has its own surrounding marker comment
   # instead) - strip everything up to and including the first blank line

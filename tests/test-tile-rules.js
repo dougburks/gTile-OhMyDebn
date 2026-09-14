@@ -54,6 +54,22 @@ assertEq('a missing/undefined title does not throw and matches nothing against a
     matchTileRule('Alacritty', undefined, rules), null);
 assertEq('an empty rule table matches nothing', matchTileRule('Alacritty', 'cliamp', []), null);
 
+// One bad entry in the (hand-editable) rule table must only disable
+// that one rule - not throw out of the loop and kill matching for
+// every rule after it.
+const rulesWithBadEntries = [
+    null,
+    { wmClass: 'Alacritty', titleRegex: '[unclosed', grid: [2, 2, 0, 0, 1, 1] },
+    { wmClass: 'Alacritty', titleRegex: '^htop$', grid: [2, 2, 1, 0, 1, 2] },
+];
+assertEq('a null rule entry is skipped, not thrown on',
+    matchTileRule('Alacritty', 'htop', rulesWithBadEntries), [2, 2, 1, 0, 1, 2]);
+assertEq('a rule with a malformed titleRegex is skipped, later rules still match',
+    matchTileRule('Alacritty', 'htop', [rulesWithBadEntries[1], rulesWithBadEntries[2]]),
+    [2, 2, 1, 0, 1, 2]);
+assertEq('a malformed titleRegex alone simply matches nothing',
+    matchTileRule('Alacritty', 'htop', [rulesWithBadEntries[1]]), null);
+
 // --- computeGridRect ---
 
 assertEq('full-screen grid (2x2, span the whole thing) on a 1920x1080 usable area at origin',
@@ -68,6 +84,27 @@ assertEq('a zero/negative span falls back to 1 rather than producing a zero-size
     computeGridRect(0, 0, 1920, 1080, 2, 2, 0, 0, 0, -1), [0, 0, 960, 540]);
 assertEq('a zero/negative cols/rows falls back to 1 rather than dividing by zero (Infinity/NaN geometry)',
     computeGridRect(0, 0, 1920, 1080, 0, -1, 0, 0, 1, 1), [0, 0, 1920, 1080]);
+
+// --- validateTileArgs (the DBus TileFocusedWindow guard) ---
+
+assertEq('a normal in-range request passes its spans through',
+    validateTileArgs(2, 2, 0, 0, 1, 2), { colSpan: 1, rowSpan: 2 });
+assertEq('omitted spans (DBus callers may send only 4 useful args) fall back to 1',
+    validateTileArgs(2, 2, 1, 1, undefined, undefined), { colSpan: 1, rowSpan: 1 });
+assertEq('zero/negative spans fall back to 1',
+    validateTileArgs(2, 2, 0, 0, 0, -3), { colSpan: 1, rowSpan: 1 });
+assertEq('spans clamp to the grid edge instead of running past it',
+    validateTileArgs(4, 4, 3, 2, 5, 5), { colSpan: 1, rowSpan: 2 });
+assertEq('a zero-column grid is rejected (would divide by zero)',
+    validateTileArgs(0, 2, 0, 0, 1, 1), null);
+assertEq('a negative-row grid is rejected',
+    validateTileArgs(2, -1, 0, 0, 1, 1), null);
+assertEq('a column index outside the grid is rejected (would place the window offscreen)',
+    validateTileArgs(2, 2, 2, 0, 1, 1), null);
+assertEq('a negative row index is rejected',
+    validateTileArgs(2, 2, 0, -1, 1, 1), null);
+assertEq('non-integer grid arguments are rejected',
+    validateTileArgs(2.5, 2, 0, 0, 1, 1), null);
 
 print('');
 print(total + ' assertion(s), ' + failures + ' failure(s)');

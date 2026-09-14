@@ -11,6 +11,7 @@
          "title": "Hotkeys",
          "sections": [
             "hotkey-section",
+            "tiling-hotkeys-section",
             "keybindings-legend-section"
          ]
       },
@@ -18,7 +19,9 @@
          "type": "page",
          "title": "Behavior",
          "sections": [
-            "behaviour-section"
+            "overlay-section",
+            "gaps-section",
+            "auto-tiling-section"
          ]
       },
       "layout-tab": {
@@ -31,18 +34,24 @@
             "grid4-section"
          ]
       },
-      "help": {
-         "type": "page",
-         "title": "Help",
-         "sections": [
-            "help-section"
-         ]
-      },
       "hotkey-section": {
          "type": "section",
-         "title": "Global Hotkey",
+         "title": "Global Hotkeys",
          "keys": [
-            "hotkey"
+            "hotkey",
+            "hotkey-open-settings"
+         ]
+      },
+      "tiling-hotkeys-section": {
+         "type": "section",
+         "title": "Tiling Hotkeys",
+         "keys": [
+            "hotkey-cycle-tiling-mode",
+            "hotkey-cycle-tiling-mode-backward",
+            "hotkey-focus-column-left",
+            "hotkey-focus-column-right",
+            "hotkey-move-column-left",
+            "hotkey-move-column-right"
          ]
       },
       "keybindings-legend-section": {
@@ -52,19 +61,33 @@
             "hotkeys-legend"
          ]
       },
-      "behaviour-section": {
+      "overlay-section": {
          "type": "section",
-         "title": "Behavior",
+         "title": "Grid Overlay",
          "keys": [
             "animation",
             "autoclose",
             "aspect-ratio",
             "useMonitorCenter",
             "showGridOnAllMonitors",
-            "select-using-keyboard",
+            "select-using-keyboard"
+         ]
+      },
+      "gaps-section": {
+         "type": "section",
+         "title": "Gaps",
+         "keys": [
             "gap-size",
-            "tiling-mode",
             "maximize-with-gaps"
+         ]
+      },
+      "auto-tiling-section": {
+         "type": "section",
+         "title": "Automatic Tiling",
+         "keys": [
+            "tiling-mode",
+            "scroll-animation-duration",
+            "scrollable-column-width"
          ]
       },
       "grid1-section": {
@@ -110,18 +133,12 @@
             "rows",
             "grid4y"
          ]
-      },
-      "help-section": {
-         "type": "section",
-         "title": "More Info",
-         "keys": [
-         ]
       }
    },
    "hotkeys-legend": {
-		"type": "label",
-		"description": "Escape:\t\t\tHide gTile\nEnter or Space:\tCommit current selection\nLeft:\t\t\tMove Left inside Grid\nRight:\t\t\tMove Right inside Grid\nUp:\t\t\t\tMove Up inside Grid\nDown:\t\t\tMove Down inside Grid\n<Shift>Left:\t\tInclude column to the Left in selection\n<Shift>Right:\t\tInclude column to the Right in selection\n<Shift>Up:\t\tInclude row Above in selection\n<Shift>Down:\tInclude row Below in selection\n<Alt>Left:\t\tMove to the monitor on the Left\n<Alt>Right:\t\tMove to the monitor on the Right\n<Alt>Up:\t\t\tMove to the monitor Above\n<Alt>Down:\t\tMove to the monitor Below\n1:\t\t\t\tSelect the first grid layout\n2:\t\t\t\tSelect the second grid layout\n3:\t\t\t\tSelect the third grid layout\n4:\t\t\t\tSelect the fourth grid layout"
-	},
+      "type": "label",
+      "description": "Escape:\t\t\tHide gTile\nEnter or Space:\tCommit current selection\nLeft:\t\t\tMove Left inside Grid\nRight:\t\t\tMove Right inside Grid\nUp:\t\t\t\tMove Up inside Grid\nDown:\t\t\tMove Down inside Grid\n<Shift>Left:\t\tInclude column to the Left in selection\n<Shift>Right:\t\tInclude column to the Right in selection\n<Shift>Up:\t\tInclude row Above in selection\n<Shift>Down:\tInclude row Below in selection\n<Alt>Left:\t\tMove to the monitor on the Left\n<Alt>Right:\t\tMove to the monitor on the Right\n<Alt>Up:\t\t\tMove to the monitor Above\n<Alt>Down:\t\tMove to the monitor Below\n1:\t\t\t\tSelect the first grid layout\n2:\t\t\t\tSelect the second grid layout\n3:\t\t\t\tSelect the third grid layout\n4:\t\t\t\tSelect the fourth grid layout\n\nWith \"Show tile labels\" enabled, each tile also shows a letter - press two letters to tile the focused window to the rectangle spanning those two tiles."
+   },
    "lastGridCols": {
       "type": "generic",
       "default": null
@@ -135,79 +152,143 @@
       "default": "<Super>g",
       "description": "Global Hotkey for gTile"
    },
+   "hotkey-open-settings": {
+      "type": "keybinding",
+      "default": "<Super><Shift>g",
+      "description": "Open gTile settings",
+      "tooltip": "Open this settings window, landing on the Behavior tab. Clear the binding to disable."
+   },
+   "hotkey-cycle-tiling-mode": {
+      "type": "keybinding",
+      "default": "<Super>l",
+      "description": "Cycle tiling mode",
+      "tooltip": "Cycle the Tiling mode setting forward through Off, Rule-based, Traditional (3 windows), Traditional (unlimited), and Scrollable, wrapping around, with an on-screen display showing the new mode. Only affects windows opened afterwards - existing windows stay where they are. Clear the binding to disable."
+   },
+   "hotkey-cycle-tiling-mode-backward": {
+      "type": "keybinding",
+      "default": "<Super><Shift>l",
+      "description": "Cycle tiling mode (backward)",
+      "tooltip": "Same cycle as \"Cycle tiling mode\", stepping backward - so any mode is at most two presses away in one direction or the other. Clear the binding to disable."
+   },
+   "hotkey-focus-column-left": {
+      "type": "keybinding",
+      "default": "<Super>comma",
+      "description": "Focus column to the left",
+      "tooltip": "Scrollable tiling only: focus the column left of the current one, scrolling it into view. Does nothing in other tiling modes. Clear the binding to disable."
+   },
+   "hotkey-focus-column-right": {
+      "type": "keybinding",
+      "default": "<Super>period",
+      "description": "Focus column to the right",
+      "tooltip": "Scrollable tiling only: focus the column right of the current one, scrolling it into view. Does nothing in other tiling modes. Clear the binding to disable."
+   },
+   "hotkey-move-column-left": {
+      "type": "keybinding",
+      "default": "<Super><Shift>comma",
+      "description": "Move column left",
+      "tooltip": "Scrollable tiling only: swap the focused window's column with its left neighbor. Does nothing in other tiling modes. Clear the binding to disable."
+   },
+   "hotkey-move-column-right": {
+      "type": "keybinding",
+      "default": "<Super><Shift>period",
+      "description": "Move column right",
+      "tooltip": "Scrollable tiling only: swap the focused window's column with its right neighbor. Does nothing in other tiling modes. Clear the binding to disable."
+   },
    "animation": {
       "type": "checkbox",
-      "default": "true",
-      "description": "Animation"
+      "default": true,
+      "description": "Popup animation",
+      "tooltip": "Animate the gTile overlay popup (show/hide and grid transitions). Automatic tiling's window animation has its own \"Tiling animation duration\" setting."
    },
    "autoclose": {
       "type": "checkbox",
-      "default": "true",
+      "default": true,
       "description": "Auto-Close"
    },
    "aspect-ratio": {
       "type": "checkbox",
-      "default": "true",
+      "default": true,
       "description": "Use monitor aspect ratio",
       "tooltip": "Should the popup's grid reflect the current monitor's aspect ratio or not."
    },
    "tiling-mode": {
       "type": "combobox",
       "default": "off",
-      "description": "Automatic tiling",
+      "description": "Tiling mode",
       "options": {
          "Off": "off",
          "Rule-based tiling": "rules",
          "Traditional tiling (3 windows)": "traditional",
-         "Traditional tiling (unlimited)": "traditional-full"
+         "Traditional tiling (unlimited)": "traditional-full",
+         "Scrollable tiling (like Niri)": "scrollable"
       },
-      "tooltip": "Off: nothing is tiled automatically - only the manual \"Tile with gaps N\" hotkeys apply.\n\nRule-based tiling: OhMyDebn's own tile-rules.json matches specific apps to specific spots.\n\nTraditional tiling (3 windows): every new window splits into a binary tree (full screen, then left/right, then upper-right/lower-right, alternating vertical/horizontal), capped at 3 windows - a 4th window discards the tree and starts over at full screen; independent per monitor and workspace; ignores tile-rules.json entirely.\n\nTraditional tiling (unlimited): the same binary-tree splitting but keeps going past 3 windows instead of restarting. Both traditional modes automatically rebalance when a window closes, so the remaining windows reclaim the freed space."
+      "tooltip": "Off: nothing is tiled automatically - only the manual \"Tile with gaps N\" hotkeys apply.\n\nRule-based tiling: OhMyDebn's own tile-rules.json matches specific apps to specific spots.\n\nTraditional tiling (3 windows): every new window splits into a binary tree (full screen, then left/right, then upper-right/lower-right, alternating vertical/horizontal), capped at 3 windows - a 4th window discards the tree and starts over at full screen; independent per monitor and workspace; ignores tile-rules.json entirely.\n\nTraditional tiling (unlimited): the same binary-tree splitting but keeps going past 3 windows instead of restarting. Both traditional modes automatically rebalance when a window closes, so the remaining windows reclaim the freed space.\n\nScrollable tiling (like Niri): every new window opens as its own full-height column to the right of the focused one, at the configured column width, and the screen is a viewport scrolling over the strip of columns - focusing a window scrolls its column into view, and columns scrolled out of view are minimized until focused again (window list, Alt-Tab, the column hotkeys on the Hotkeys tab - Super+comma/period by default - or the org.gTile.Control D-Bus methods FocusColumnLeft/FocusColumnRight and MoveColumnLeft/MoveColumnRight). A lone window fills the whole screen and collapses to a column when a second one opens - and expands again when it's alone. Ignores tile-rules.json entirely.\n\nAll automatic modes are independent per monitor and workspace, and a window stays in the layout of the monitor and workspace it opened on - moving it elsewhere by hand doesn't re-tile it there. Cycle through the modes with Super+L / Super+Shift+L (see the Hotkeys tab); switching modes only affects windows opened afterwards."
+   },
+   "scrollable-column-width": {
+      "type": "spinbutton",
+      "default": 50,
+      "min": 20,
+      "max": 80,
+      "units": "%",
+      "step": 5,
+      "description": "Scrollable tiling column width",
+      "tooltip": "Column width for Scrollable tiling, as a percentage of the usable screen width. At 50% two columns are visible at a time; at 33% three are. Only used when Automatic tiling is set to Scrollable tiling. A lone window always fills the whole screen regardless of this setting."
+   },
+   "scroll-animation-duration": {
+      "type": "spinbutton",
+      "default": 200,
+      "min": 0,
+      "max": 500,
+      "step": 25,
+      "units": "ms",
+      "description": "Tiling animation duration",
+      "tooltip": "How long windows take to glide and resize into place when automatic tiling rearranges them - Scrollable tiling's scrolling as well as the Traditional modes' splits and rebalances - in milliseconds. 0 disables the animation. Automatically disabled while Cinnamon's system-wide desktop effects are turned off."
    },
    "maximize-with-gaps": {
       "type": "checkbox",
-      "default": "false",
+      "default": false,
       "description": "Maximize with gaps",
       "tooltip": "When maximizing a window (titlebar maximize button, Super+PageUp, or double-clicking the titlebar), leave the existing window-gap margin instead of a true edge-to-edge maximize. Dragging a window to the top edge is not affected - that's a separate top-half tile, not a maximize.\n\nIndependent of Automatic tiling - applies no matter which tiling mode is selected. Uses the same \"Window gaps in pixels\" size set above.\n\nNote: Cinnamon no longer considers a gap-maximized window \"maximized\" internally, so maximizing it again restores it to its original size and position instead of re-maximizing."
    },
    "useMonitorCenter": {
       "type": "checkbox",
-      "default": "false",
+      "default": false,
       "description": "UI always centered to monitor",
       "tooltip": "By default the grid UI shows up in the middle of the active window. With this, it always displays in the middle of the monitor."
    },
    "showGridOnAllMonitors": {
       "type": "checkbox",
-      "default": "false",
-      "description": "Show UI and all monitors at the same time"
+      "default": false,
+      "description": "Show UI on all monitors at the same time"
    },
    "columns": {
-		"type": "label",
-		"description": "Columns"
-	},
+      "type": "label",
+      "description": "Columns"
+   },
    "rows": {
-		"type": "label",
-		"description": "Rows"
-	},
+      "type": "label",
+      "description": "Rows"
+   },
    "grid1NameOverride": {
       "type": "entry",
-		"default": "",
-		"description": "Name Override on the UI"
+      "default": "",
+      "description": "Name Override on the UI"
    },
    "grid1x": {
-		"type": "list",
-		"description": "Columns",
-		"tooltip": "Each row represents a column. Span is how much space a column should take up compared to the other columns. Default is 1.",
-		"columns": [
-			{
-				"id": "span",
-				"title": "Span",
-				"type": "float",
-				"min": 0,
-				"max": 1000,
-				"step": 0.01
-			}
-		],
-		"default": [
+      "type": "list",
+      "description": "Columns",
+      "tooltip": "Each row represents a column. Span is how much space a column should take up compared to the other columns. Default is 1.",
+      "columns": [
+         {
+            "id": "span",
+            "title": "Span",
+            "type": "float",
+            "min": 0,
+            "max": 1000,
+            "step": 0.01
+         }
+      ],
+      "default": [
          {
             "span": 1
          },
@@ -215,22 +296,22 @@
             "span": 1
          }
       ]
-	},
+   },
    "grid1y": {
-		"type": "list",
-		"description": "Rows",
-		"tooltip": "Each row represents a row. Span is how much space a row should take up compared to the other columns. Default is 1.",
-		"columns": [
-			{
-				"id": "span",
-				"title": "Span",
-				"type": "float",
-				"min": 0,
-				"max": 1000,
-				"step": 0.01
-			}
-		],
-		"default": [
+      "type": "list",
+      "description": "Rows",
+      "tooltip": "Each row represents a row. Span is how much space a row should take up compared to the other rows. Default is 1.",
+      "columns": [
+         {
+            "id": "span",
+            "title": "Span",
+            "type": "float",
+            "min": 0,
+            "max": 1000,
+            "step": 0.01
+         }
+      ],
+      "default": [
          {
             "span": 1
          },
@@ -238,27 +319,27 @@
             "span": 1
          }
       ]
-	},
+   },
    "grid2NameOverride": {
       "type": "entry",
-		"default": "",
-		"description": "Name Override"
+      "default": "",
+      "description": "Name Override on the UI"
    },
    "grid2x": {
-		"type": "list",
-		"description": "Columns",
-		"tooltip": "Each row represents a column. Span is how much space a column should take up compared to the other columns. Default is 1.",
-		"columns": [
-			{
-				"id": "span",
-				"title": "Span",
-				"type": "float",
-				"min": 0,
-				"max": 1000,
-				"step": 0.01
-			}
-		],
-		"default": [
+      "type": "list",
+      "description": "Columns",
+      "tooltip": "Each row represents a column. Span is how much space a column should take up compared to the other columns. Default is 1.",
+      "columns": [
+         {
+            "id": "span",
+            "title": "Span",
+            "type": "float",
+            "min": 0,
+            "max": 1000,
+            "step": 0.01
+         }
+      ],
+      "default": [
          {
             "span": 1
          },
@@ -269,22 +350,22 @@
             "span": 1
          }
       ]
-	},
+   },
    "grid2y": {
-		"type": "list",
-		"description": "Rows",
-		"tooltip": "Each row represents a row. Span is how much space a row should take up compared to the other columns. Default is 1.",
-		"columns": [
-			{
-				"id": "span",
-				"title": "Span",
-				"type": "float",
-				"min": 0,
-				"max": 1000,
-				"step": 0.01
-			}
-		],
-		"default": [
+      "type": "list",
+      "description": "Rows",
+      "tooltip": "Each row represents a row. Span is how much space a row should take up compared to the other rows. Default is 1.",
+      "columns": [
+         {
+            "id": "span",
+            "title": "Span",
+            "type": "float",
+            "min": 0,
+            "max": 1000,
+            "step": 0.01
+         }
+      ],
+      "default": [
          {
             "span": 1
          },
@@ -292,27 +373,27 @@
             "span": 1
          }
       ]
-	},
+   },
    "grid3NameOverride": {
       "type": "entry",
-		"default": "",
-		"description": "Name Override"
+      "default": "",
+      "description": "Name Override on the UI"
    },
    "grid3x": {
-		"type": "list",
-		"description": "Columns",
-		"tooltip": "Each row represents a column. Span is how much space a column should take up compared to the other columns. Default is 1.",
-		"columns": [
-			{
-				"id": "span",
-				"title": "Span",
-				"type": "float",
-				"min": 0,
-				"max": 1000,
-				"step": 0.01
-			}
-		],
-		"default": [
+      "type": "list",
+      "description": "Columns",
+      "tooltip": "Each row represents a column. Span is how much space a column should take up compared to the other columns. Default is 1.",
+      "columns": [
+         {
+            "id": "span",
+            "title": "Span",
+            "type": "float",
+            "min": 0,
+            "max": 1000,
+            "step": 0.01
+         }
+      ],
+      "default": [
          {
             "span": 1
          },
@@ -326,22 +407,22 @@
             "span": 1
          }
       ]
-	},
+   },
    "grid3y": {
-		"type": "list",
-		"description": "Rows",
-		"tooltip": "Each row represents a row. Span is how much space a row should take up compared to the other columns. Default is 1.",
-		"columns": [
-			{
-				"id": "span",
-				"title": "Span",
-				"type": "float",
-				"min": 0,
-				"max": 1000,
-				"step": 0.01
-			}
-		],
-		"default": [
+      "type": "list",
+      "description": "Rows",
+      "tooltip": "Each row represents a row. Span is how much space a row should take up compared to the other rows. Default is 1.",
+      "columns": [
+         {
+            "id": "span",
+            "title": "Span",
+            "type": "float",
+            "min": 0,
+            "max": 1000,
+            "step": 0.01
+         }
+      ],
+      "default": [
          {
             "span": 1
          },
@@ -355,27 +436,27 @@
             "span": 1
          }
       ]
-	},
+   },
    "grid4NameOverride": {
       "type": "entry",
-		"default": "",
-		"description": "Name Override"
+      "default": "",
+      "description": "Name Override on the UI"
    },
    "grid4x": {
-		"type": "list",
-		"description": "Columns",
-		"tooltip": "Each row represents a column. Span is how much space a column should take up compared to the other columns. Default is 1.",
-		"columns": [
-			{
-				"id": "span",
-				"title": "Span",
-				"type": "float",
-				"min": 0,
-				"max": 1000,
-				"step": 0.01
-			}
-		],
-		"default": [
+      "type": "list",
+      "description": "Columns",
+      "tooltip": "Each row represents a column. Span is how much space a column should take up compared to the other columns. Default is 1.",
+      "columns": [
+         {
+            "id": "span",
+            "title": "Span",
+            "type": "float",
+            "min": 0,
+            "max": 1000,
+            "step": 0.01
+         }
+      ],
+      "default": [
          {
             "span": 1
          },
@@ -395,22 +476,22 @@
             "span": 1
          }
       ]
-	},
+   },
    "grid4y": {
-		"type": "list",
-		"description": "Rows",
-		"tooltip": "Each row represents a row. Span is how much space a row should take up compared to the other columns. Default is 1.",
-		"columns": [
-			{
-				"id": "span",
-				"title": "Span",
-				"type": "float",
-				"min": 0,
-				"max": 1000,
-				"step": 0.01
-			}
-		],
-		"default": [
+      "type": "list",
+      "description": "Rows",
+      "tooltip": "Each row represents a row. Span is how much space a row should take up compared to the other rows. Default is 1.",
+      "columns": [
+         {
+            "id": "span",
+            "title": "Span",
+            "type": "float",
+            "min": 0,
+            "max": 1000,
+            "step": 0.01
+         }
+      ],
+      "default": [
          {
             "span": 1
          },
@@ -430,27 +511,19 @@
             "span": 1
          }
       ]
-	},
+   },
    "select-using-keyboard": {
       "type": "checkbox",
       "default": false,
       "description": "Show tile labels"
    },
-   "seperator5" : {
-      "type" : "separator"
-   },
-   "header5" : {
-      "type" : "header",
-      "description" : "Gaps:"
-   },
    "gap-size": {
-      "type" : "spinbutton",
-      "indent" : "true",
-      "default" : 10,
-      "min" : 0,
-      "max" : 100,
-      "units" : "px",
-      "step" : 1,
-      "description" : "Window gaps in pixels"
+      "type": "spinbutton",
+      "default": 10,
+      "min": 0,
+      "max": 100,
+      "units": "px",
+      "step": 1,
+      "description": "Window gaps in pixels"
    }
 }
