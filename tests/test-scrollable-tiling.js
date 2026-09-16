@@ -43,8 +43,8 @@ assertEq('null falls back to 50%', columnWidthFraction(null), 0.5);
 assertEq('non-numeric falls back to 50%', columnWidthFraction('abc'), 0.5);
 assertEq('zero/negative falls back to 50% (would blow up the fit division)',
     [columnWidthFraction(0), columnWidthFraction(-10)], [0.5, 0.5]);
-assertEq('tiny values clamp to 10%', columnWidthFraction(3), 0.1);
-assertEq('values past 100 clamp to 100%', columnWidthFraction(250), 1);
+assertEq('tiny values clamp to the schema minimum (20%)', columnWidthFraction(3), 0.2);
+assertEq('values past the schema maximum clamp to 50% - wider fits only one column per screen', columnWidthFraction(80), 0.5);
 
 // --- normalizeScrollDuration (raw ms setting -> effective slide time) ---
 
@@ -56,7 +56,7 @@ assertEq('undefined falls back to the default of 200', normalizeScrollDuration(u
 assertEq('non-numeric falls back to the default of 200', normalizeScrollDuration('abc'), 200);
 assertEq('a negative duration clamps to 0', normalizeScrollDuration(-50), 0);
 assertEq('a fractional duration floors', normalizeScrollDuration(99.9), 99);
-assertEq('an absurd duration clamps to 1000', normalizeScrollDuration(5000), 1000);
+assertEq('an absurd duration clamps to the schema maximum (500)', normalizeScrollDuration(5000), 500);
 
 // --- nextTilingMode (the Super+L cycle) ---
 

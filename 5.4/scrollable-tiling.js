@@ -26,39 +26,49 @@
 // tests/check-sync.sh fails if the two copies ever drift - keep them
 // identical when editing either one.
 
+// Bounds shared with settings-schema.json's spinbuttons (the schema
+// test cross-checks them, so the code's clamps and the UI's limits can't
+// drift apart again). Column width tops out at 50%: anything wider fits
+// only one column per screen, leaving the rest blank. var, not const -
+// same eval() scoping reason as TILING_MODE_CYCLE below.
+var SCROLLABLE_COLUMN_WIDTH_MIN_PERCENT = 20;
+var SCROLLABLE_COLUMN_WIDTH_MAX_PERCENT = 50;
+var SCROLL_ANIMATION_MAX_MS = 500;
+
 // The "scrollable-column-width" setting is a percent - normalize it
 // into the (0..1] width fraction the rest of this file uses: null,
-// non-numeric, or non-positive falls back to 50%, and sane values
-// clamp to 10..100 so the division in stripVisibleCount below can't
-// blow up.
+// anything that doesn't coerce to a finite number, or non-positive
+// falls back to 50%, and other values clamp to the schema's bounds so
+// the division in stripVisibleCount below can't blow up.
 function columnWidthFraction(percent) {
     const n = Number(percent);
     if (!Number.isFinite(n) || n <= 0)
         return 0.5;
-    return Math.min(100, Math.max(10, n)) / 100;
+    return Math.min(SCROLLABLE_COLUMN_WIDTH_MAX_PERCENT, Math.max(SCROLLABLE_COLUMN_WIDTH_MIN_PERCENT, n)) / 100;
 }
 
 // The "scroll-animation-duration" setting is milliseconds - 0 is a
 // real value meaning "no tiling animation" (pinned by the tests so
 // the disable contract can't silently break), negatives clamp to 0,
-// fractions floor, values past 1000 clamp down, and anything
-// non-numeric - or an unset null/undefined - falls back to the
-// default of 200.
+// fractions floor, values past the schema's maximum clamp down, and
+// anything that doesn't coerce to a finite number - or an unset
+// null/undefined - falls back to the default of 200.
 function normalizeScrollDuration(ms) {
     if (ms == null)
         return 200;
     const n = Number(ms);
     if (!Number.isFinite(n))
         return 200;
-    return Math.min(1000, Math.max(0, Math.floor(n)));
+    return Math.min(SCROLL_ANIMATION_MAX_MS, Math.max(0, Math.floor(n)));
 }
 
 // The tiling-mode cycle driven by the "cycle tiling mode" hotkeys and
 // the CycleTilingMode DBus method. Mode-level rather than
 // scrollable-specific, but it lives in this file to share the
 // embed/test infrastructure. The order matches the settings
-// combobox top to bottom, and the settings-schema test cross-checks
-// that this list and the combobox options can never drift apart.
+// combobox top to bottom by convention; the settings-schema test
+// cross-checks that this list and the combobox options are the same
+// set, so a mode can't be added to one and forgotten in the other.
 // var, not const - same eval() scoping reason as TREE_FULL_REGION in
 // traditional-tiling.js.
 var TILING_MODE_CYCLE = ['off', 'rules', 'traditional', 'traditional-full', 'scrollable'];

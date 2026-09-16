@@ -49,8 +49,10 @@ function computeGappedRect(x, y, width, height, usableLeft, usableTop, usableWid
 // actually used: 0 is valid and stays 0 (a `|| 10`-style fallback at a
 // call site once silently turned a configured gap of 0 into 10 - the
 // regression the tests pin), negatives clamp to 0, fractions floor,
-// and anything non-numeric - or an unset null/undefined - falls back
-// to the default of 10.
+// and anything that doesn't coerce to a finite number ('abc',
+// Infinity) - or an unset null/undefined - falls back to the default of
+// 10. (Number() coercion applies first: '' and false become 0, true
+// becomes 1 - not fallbacks.)
 function normalizeGapSize(value) {
     if (value == null)
         return 10;

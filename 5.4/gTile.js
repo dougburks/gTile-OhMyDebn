@@ -337,8 +337,12 @@ function treeLeafDepth(leaf) {
 // keeps the existing window in the first half, `second` gets `newWindow`
 // in the second half. Axis alternates by the leaf's own current depth
 // (even depth = vertical/side-by-side, odd = horizontal/stacked) rather
-// than a separately-tracked counter, so it self-corrects after any
-// rebalance instead of needing to be kept in sync by hand. Does not
+// than a separately-tracked counter, so nothing needs keeping in sync by
+// hand. Not strictly alternating after a collapse, though: treeRemove
+// keeps each surviving split's stored orientation while depths shrink,
+// so a later insert can split on the same axis as its new parent (e.g.
+// A|B|C side by side instead of a nested stack) - a valid layout, just
+// not the textbook dwindle one. Does not
 // splice the new split node into the tree - the caller does that (the
 // two callers, treeInsert and a fresh-tree start, need it done
 // differently).
@@ -381,7 +385,7 @@ function treeSplitLeaf(leaf, newWindow) {
 // state: { root, insertionLeaf, leafCount } - pass { root: null,
 // insertionLeaf: null, leafCount: 0 } for an empty/new tree. maxLeaves:
 // 3 for the capped mode, null (or any falsy value) for uncapped
-// "Traditional Full".
+// "Traditional tiling (unlimited)".
 //
 // Returns { root, insertionLeaf, leafCount, moves }. moves lists windows
 // that were ALREADY placed and need to physically move to make room
@@ -535,39 +539,49 @@ function regionToRect(region, usableArea) {
 // `gjs`, with no live Cinnamon session, by
 // tests/test-scrollable-tiling.js.
 // BEGIN scrollable-tiling.js
+// Bounds shared with settings-schema.json's spinbuttons (the schema
+// test cross-checks them, so the code's clamps and the UI's limits can't
+// drift apart again). Column width tops out at 50%: anything wider fits
+// only one column per screen, leaving the rest blank. var, not const -
+// same eval() scoping reason as TILING_MODE_CYCLE below.
+var SCROLLABLE_COLUMN_WIDTH_MIN_PERCENT = 20;
+var SCROLLABLE_COLUMN_WIDTH_MAX_PERCENT = 50;
+var SCROLL_ANIMATION_MAX_MS = 500;
+
 // The "scrollable-column-width" setting is a percent - normalize it
 // into the (0..1] width fraction the rest of this file uses: null,
-// non-numeric, or non-positive falls back to 50%, and sane values
-// clamp to 10..100 so the division in stripVisibleCount below can't
-// blow up.
+// anything that doesn't coerce to a finite number, or non-positive
+// falls back to 50%, and other values clamp to the schema's bounds so
+// the division in stripVisibleCount below can't blow up.
 function columnWidthFraction(percent) {
     const n = Number(percent);
     if (!Number.isFinite(n) || n <= 0)
         return 0.5;
-    return Math.min(100, Math.max(10, n)) / 100;
+    return Math.min(SCROLLABLE_COLUMN_WIDTH_MAX_PERCENT, Math.max(SCROLLABLE_COLUMN_WIDTH_MIN_PERCENT, n)) / 100;
 }
 
 // The "scroll-animation-duration" setting is milliseconds - 0 is a
 // real value meaning "no tiling animation" (pinned by the tests so
 // the disable contract can't silently break), negatives clamp to 0,
-// fractions floor, values past 1000 clamp down, and anything
-// non-numeric - or an unset null/undefined - falls back to the
-// default of 200.
+// fractions floor, values past the schema's maximum clamp down, and
+// anything that doesn't coerce to a finite number - or an unset
+// null/undefined - falls back to the default of 200.
 function normalizeScrollDuration(ms) {
     if (ms == null)
         return 200;
     const n = Number(ms);
     if (!Number.isFinite(n))
         return 200;
-    return Math.min(1000, Math.max(0, Math.floor(n)));
+    return Math.min(SCROLL_ANIMATION_MAX_MS, Math.max(0, Math.floor(n)));
 }
 
 // The tiling-mode cycle driven by the "cycle tiling mode" hotkeys and
 // the CycleTilingMode DBus method. Mode-level rather than
 // scrollable-specific, but it lives in this file to share the
 // embed/test infrastructure. The order matches the settings
-// combobox top to bottom, and the settings-schema test cross-checks
-// that this list and the combobox options can never drift apart.
+// combobox top to bottom by convention; the settings-schema test
+// cross-checks that this list and the combobox options are the same
+// set, so a mode can't be added to one and forgotten in the other.
 // var, not const - same eval() scoping reason as TREE_FULL_REGION in
 // traditional-tiling.js.
 var TILING_MODE_CYCLE = ['off', 'rules', 'traditional', 'traditional-full', 'scrollable'];
@@ -747,8 +761,10 @@ function computeGappedRect(x, y, width, height, usableLeft, usableTop, usableWid
 // actually used: 0 is valid and stays 0 (a `|| 10`-style fallback at a
 // call site once silently turned a configured gap of 0 into 10 - the
 // regression the tests pin), negatives clamp to 0, fractions floor,
-// and anything non-numeric - or an unset null/undefined - falls back
-// to the default of 10.
+// and anything that doesn't coerce to a finite number ('abc',
+// Infinity) - or an unset null/undefined - falls back to the default of
+// 10. (Number() coercion applies first: '' and false become 0, true
+// becomes 1 - not fallbacks.)
 function normalizeGapSize(value) {
     if (value == null)
         return 10;
@@ -986,40 +1002,9 @@ var __decorate = (undefined && undefined.__decorate) || function (decorators, ta
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 
-
-const Tooltips = imports.ui.tooltips;
-const ActionButton_St = imports.gi.St;
-let ActionButton = class ActionButton {
-    constructor(classname, icon) {
-        this._onButtonPress = () => {
-            this.emit('button-press-event');
-            return false;
-        };
-        this.actor = new ActionButton_St.Button({
-            style_class: "settings-button",
-            reactive: true,
-            can_focus: true,
-            track_hover: true,
-            child: new ActionButton_St.Icon({
-                reactive: true,
-                icon_name: icon,
-                icon_size: 36,
-                icon_type: ActionButton_St.IconType.SYMBOLIC,
-                can_focus: true,
-                track_hover: true
-            })
-        });
-        this.actor.connect('button-press-event', this._onButtonPress);
-        if (TOOLTIPS[classname]) {
-            this._tooltip = new Tooltips.Tooltip(this.actor, TOOLTIPS[classname]);
-        }
-    }
-};
-ActionButton = __decorate([
-    addSignals
-], ActionButton);
-
-;
+// (upstream's ActionButton class used to live here; nothing in this
+// bundle ever instantiated it, so it's gone. __decorate above is still
+// used by ToggleSettingsButton.)
 
 ;// CONCATENATED MODULE: ../base/ui/GridElement.ts
 
@@ -1151,7 +1136,7 @@ let GridElementDelegate = class GridElementDelegate {
             let grid = fromGridElement.grid;
             for (let r = minY; r <= maxY; r++) {
                 for (let c = minX; c <= maxX; c++) {
-                    let element = grid === null || grid === void 0 ? void 0 : grid.elements[r][c];
+                    let element = grid.elements[r][c];
                     element._activate();
                     (_a = this.activatedActors) === null || _a === void 0 ? void 0 : _a.push(element);
                 }
@@ -1288,7 +1273,7 @@ const { Icon, IconType, Button } = imports.gi.St;
 const ToggleSettingsButton_Tooltips = imports.ui.tooltips;
 const { IconTheme } = imports.gi.Gtk;
 let ToggleSettingsButton = class ToggleSettingsButton {
-    constructor(setting, text, property, icon) {
+    constructor(setting, property, icon) {
         this.active = false;
         this._update = () => {
             this.active = this.settings[this.property];
@@ -1307,7 +1292,6 @@ let ToggleSettingsButton = class ToggleSettingsButton {
             return false;
         };
         this.settings = setting;
-        this.text = text;
         this.actor = new Button({
             style_class: "settings-button",
             reactive: true,
@@ -1399,7 +1383,6 @@ const { BoxLayout, Table, Bin } = imports.gi.St;
 const Grid_Main = imports.ui.main;
 const Grid_Tweener = imports.ui.tweener;
 const { Side } = imports.gi.Meta;
-const { Color } = imports.gi.Clutter;
 let Grid = class Grid {
     constructor(app, monitor, title, cols, rows) {
         this.tableWidth = 220;
@@ -1620,7 +1603,7 @@ let Grid = class Grid {
             monitor = monitor ? monitor : this.app.CurrentMonitor;
             if (monitor.index == this.app.CurrentMonitor.index)
                 return;
-            this.app.MoveToMonitor(this.app.CurrentMonitor, monitor !== null && monitor !== void 0 ? monitor : this.app.CurrentMonitor);
+            this.app.MoveToMonitor(this.app.CurrentMonitor, monitor);
         };
         this.destroy = () => {
             for (let r in this.elements) {
@@ -1643,11 +1626,7 @@ let Grid = class Grid {
             this.actor = null;
         };
         this.app = app;
-        this.tableHeight = 200;
-        this.tableWidth = 220;
-        this.panelBorderOffset = 40;
         this.panelWidth = (this.tableWidth + this.panelBorderOffset);
-        this.borderwidth = 2;
         this.actor = new BoxLayout({
             vertical: true,
             style_class: 'grid-panel',
@@ -1692,10 +1671,10 @@ let Grid = class Grid {
         this.title = title;
         this.cols = cols;
         this.isEntered = false;
-        let toggle = new ToggleSettingsButton(this.app.config, 'animation', SETTINGS_ANIMATION, "animation_black-symbolic");
+        let toggle = new ToggleSettingsButton(this.app.config, SETTINGS_ANIMATION, "animation_black-symbolic");
         this.veryBottomBar.add(toggle.actor, { row: 0, col: 0, x_fill: false, y_fill: false });
         this.toggleSettingButtons.push(toggle);
-        toggle = new ToggleSettingsButton(this.app.config, 'auto-close', SETTINGS_AUTO_CLOSE, "auto_close_black-symbolic");
+        toggle = new ToggleSettingsButton(this.app.config, SETTINGS_AUTO_CLOSE, "auto_close_black-symbolic");
         this.veryBottomBar.add(toggle.actor, { row: 0, col: 1, x_fill: false, y_fill: false });
         this.toggleSettingButtons.push(toggle);
         this.x = 0;
@@ -1703,7 +1682,6 @@ let Grid = class Grid {
         this.interceptHide = false;
         this.RebuildGridElements();
         this.normalScaleY = this.actor.scale_y;
-        this.normalScaleX = this.actor.scale_x;
     }
     ChangeCurrentMonitor(monitor) {
         this.monitor = monitor;
@@ -1806,13 +1784,11 @@ const Cinnamon = imports.gi.Cinnamon;
 const app_St = imports.gi.St;
 const app_Main = imports.ui.main;
 const app_Tweener = imports.ui.tweener;
-let metadata;
 class App {
     constructor(platform) {
         this.visible = false;
         this.tracker = Cinnamon.WindowTracker.get_default();
         this.monitors = app_Main.layoutManager.monitors;
-        this.focusMetaWindowConnections = [];
         this.focusMetaWindowPrivateConnections = [];
         this.area = new app_St.BoxLayout({ style_class: 'grid-preview' });
         this.currentMonitor = app_Main.layoutManager.primaryMonitor;
@@ -1833,7 +1809,7 @@ class App {
             }
             return this.visible;
         };
-        this.MoveToMonitor = async (current, newMonitor) => {
+        this.MoveToMonitor = (current, newMonitor) => {
             if (current.index == newMonitor.index)
                 return;
             if (!this.config.showGridOnAllMonitors) {
@@ -1945,11 +1921,9 @@ class App {
         this.DestroyGrid = () => {
             this.RemoveKeyControls();
             for (const grid of this.grids) {
-                if (typeof grid != 'undefined') {
-                    grid.Hide(true);
-                    app_Main.layoutManager.removeChrome(grid.actor);
-                    grid.destroy();
-                }
+                grid.Hide(true);
+                app_Main.layoutManager.removeChrome(grid.actor);
+                grid.destroy();
             }
             this.grids = [];
         };
@@ -2032,17 +2006,10 @@ class App {
             this.MoveUIActor();
         };
         this.ResetFocusedWindow = () => {
-            var _a;
-            if (this.focusMetaWindowConnections.length > 0) {
-                for (var idx in this.focusMetaWindowConnections) {
-                    (_a = this.focusMetaWindow) === null || _a === void 0 ? void 0 : _a.disconnect(this.focusMetaWindowConnections[idx]);
-                }
-            }
             if (this.focusMetaWindow != null && this.focusMetaWindowPrivateConnections.length > 0) {
                 this.platform.unsubscribe_from_focused_window_changes(this.focusMetaWindow, ...this.focusMetaWindowPrivateConnections);
             }
             this.focusMetaWindow = null;
-            this.focusMetaWindowConnections = [];
             this.focusMetaWindowPrivateConnections = [];
         };
 
@@ -2392,7 +2359,8 @@ const enable = () => {
     // --- Auto-tile mode: a settings-panel combobox (see
     // settings-schema.json's "tiling-mode" entry) with five values -
     // "off" (the schema default - nothing automatic, only the manual
-    // "Tile with gaps N" hotkeys), "rules" (tile-rules.json matching),
+    // external callers such as OhMyDebn's Tile-with-gaps keybindings,
+    // which go through the DBus interface), "rules" (tile-rules.json matching),
     // "traditional" (bypasses tile-rules.json entirely and sweeps every
     // new window into a binary-tree dynamic-tiling cycle instead, capped
     // at 3 windows), "traditional-full" (the same tree, uncapped -
@@ -2486,7 +2454,7 @@ const enable = () => {
     // state ({ root, insertionLeaf, leafCount } - see treeInsert/
     // treeRemove above) - independent tree per monitor+workspace pair,
     // not one global tree. "Traditional tiling" (capped at 3 leaves) and
-    // "Traditional Full" (uncapped) share the exact same tree logic -
+    // "Traditional tiling (unlimited)" (uncapped) share the exact same tree logic -
     // only the maxLeaves argument passed to treeInsert differs - but
     // keep separate Maps so switching between the two modes mid-session
     // (no state reset on mode-switch, by design) can't let one mode's
@@ -2576,6 +2544,22 @@ const enable = () => {
     // resolvePlacement callback) rather than using creation-time
     // coordinates.
     const settlingWindows = new Set();
+    // Marks `win` as unmanaging - call synchronously at the top of a
+    // per-window 'unmanaging' hook, before any deferred work anywhere can
+    // run - and schedules the delayed self-cleanup of both marks (NOT
+    // done in the window_manager 'destroy' hook - see its own comment):
+    // by 5s every deferred rebalance that could consult them has long
+    // run, and without this the sets would accumulate dead-window
+    // wrappers for the whole session. Shared by the tree modes' and the
+    // scrollable mode's hooks, which used to carry identical copies.
+    const markDying = (win) => {
+        dyingWindows.add(win);
+        imports.gi.GLib.timeout_add(imports.gi.GLib.PRIORITY_DEFAULT, 5000, () => {
+            dyingWindows.delete(win);
+            settlingWindows.delete(win);
+            return imports.gi.GLib.SOURCE_REMOVE;
+        });
+    };
 
     // --- Scrollable tiling state and helpers (tiling-mode
     // "scrollable"): one strip per monitor+workspace, same keying as
@@ -2694,8 +2678,7 @@ const enable = () => {
     // sequence.
     const applyScrollableLayout = (state, skipWindow) => {
         const lm = imports.ui.main.layoutManager;
-        const monitor = (Number.isInteger(state.monitorIndex) && lm.monitors[state.monitorIndex])
-            ? lm.monitors[state.monitorIndex] : lm.primaryMonitor;
+        const monitor = monitorForIndex(lm.monitors, state.monitorIndex, lm.primaryMonitor);
         const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
         const animDurationMs = tilingAnimationDurationMs();
         const layout = stripLayout(state.columns, state.firstVisible, scrollableWidthFraction());
@@ -2869,7 +2852,10 @@ const enable = () => {
         const nodeInfo = Gio.DBusNodeInfo.new_for_xml(IFACE_XML);
         const ifaceInfo = nodeInfo.interfaces[0];
 
-        // Build a proper vtable object with a method_call function (don't use new Gio.DBusInterfaceVTable)
+        // The interface's single dispatcher. GJS's register_object wants
+        // the bare method_call function (not a Gio.DBusInterfaceVTable
+        // instance), which is what gets passed below; the wrapping object
+        // just names it.
         const vtable = {
             method_call: function (connection, sender, objectPath, interfaceName, methodName, params, invocation) {
                 // Scrollable-tiling column navigation (no arguments,
@@ -2917,7 +2903,7 @@ const enable = () => {
                     return;
                 }
                 try {
-                    const args = params.deep_unpack(); // [cols, rows, colIndex, rowIndex, colSpan?, rowSpan?]
+                    const args = params.deep_unpack(); // [cols, rows, colIndex, rowIndex, colSpan, rowSpan] - all six required by the (iiiiii) signature
                     const nbCols = args[0];
                     const nbRows = args[1];
                     const colIndex = args[2];
@@ -2996,7 +2982,6 @@ const enable = () => {
         };
 
         // register object on Cinnamon's session bus (Cinnamon process is the owner)
-        // some GJS/GIO versions expect a function for method_call_closure instead of a vtable object
         dbusRegistrationId = Gio.DBus.session.register_object('/org/gTile/Control', ifaceInfo, vtable.method_call, null, null);
 
         // request a well-known session bus name so external callers can target org.gTile.Control
@@ -3081,16 +3066,14 @@ const enable = () => {
         const resolveMonitor = (win) => {
             const lm = imports.ui.main.layoutManager;
             try {
-                const currentMonitorIndex = global.display.get_current_monitor();
-                if (Number.isInteger(currentMonitorIndex) && lm.monitors[currentMonitorIndex])
-                    return lm.monitors[currentMonitorIndex];
+                const current = monitorForIndex(lm.monitors, global.display.get_current_monitor(), null);
+                if (current)
+                    return current;
             } catch (e) {
                 global.log('gTile: resolveMonitor get_current_monitor failed: ' + e);
             }
             const winMonitorIndex = typeof win.get_monitor === 'function' ? win.get_monitor() : null;
-            if (Number.isInteger(winMonitorIndex) && lm.monitors[winMonitorIndex])
-                return lm.monitors[winMonitorIndex];
-            return lm.primaryMonitor;
+            return monitorForIndex(lm.monitors, winMonitorIndex, lm.primaryMonitor);
         };
 
         // window-created fires before Mutter/Muffin's own initial-
@@ -3283,7 +3266,7 @@ const enable = () => {
         // see treeInsert/treeRemove above for the tree logic itself; this
         // is just the thin Meta-touching layer that applies whatever they
         // decide. maxLeaves: 3 for "Traditional tiling" (capped), null
-        // for "Traditional Full" (uncapped) - the only difference between
+        // for "Traditional tiling (unlimited)" (uncapped) - the only difference between
         // the two modes, since they share the exact same tree.
         const handleTreeTilingWindowCreated = (win, stateMap, maxLeaves) => {
             const { key } = resolveMonitorAndKey(win);
@@ -3389,20 +3372,7 @@ const enable = () => {
             // ran first.
             try {
                 win.connect('unmanaging', () => {
-                    // Synchronously, before any deferred work anywhere
-                    // can run - see dyingWindows' own comment above.
-                    dyingWindows.add(win);
-                    // Delayed self-cleanup for the dying/settling marks
-                    // (NOT done in the window_manager 'destroy' hook -
-                    // see its own comment): by 5s every deferred
-                    // rebalance that could consult the mark has long
-                    // run, and without this the sets would accumulate
-                    // dead-window wrappers for the whole session.
-                    imports.gi.GLib.timeout_add(imports.gi.GLib.PRIORITY_DEFAULT, 5000, () => {
-                        dyingWindows.delete(win);
-                        settlingWindows.delete(win);
-                        return imports.gi.GLib.SOURCE_REMOVE;
-                    });
+                    markDying(win);
                     imports.gi.GLib.idle_add(imports.gi.GLib.PRIORITY_DEFAULT, () => {
                         // This closure outlives the enable() scope it was
                         // created in (nothing disconnects per-window
@@ -3493,8 +3463,7 @@ const enable = () => {
                 if (!entry.visible)
                     return { minimize: true };
                 const lm = imports.ui.main.layoutManager;
-                const mon = (Number.isInteger(current.monitorIndex) && lm.monitors[current.monitorIndex])
-                    ? lm.monitors[current.monitorIndex] : lm.primaryMonitor;
+                const mon = monitorForIndex(lm.monitors, current.monitorIndex, lm.primaryMonitor);
                 const [sx, sy, sw, sh] = getUsableScreenArea(mon);
                 return { rect: [sx + entry.region.x * sw, sy, entry.region.width * sw, sh] };
             };
@@ -3507,20 +3476,7 @@ const enable = () => {
             // directly inside 'unmanaging').
             try {
                 win.connect('unmanaging', () => {
-                    // Synchronously, before any deferred work anywhere
-                    // can run - see dyingWindows' own comment above.
-                    dyingWindows.add(win);
-                    // Delayed self-cleanup for the dying/settling marks
-                    // (NOT done in the window_manager 'destroy' hook -
-                    // see its own comment): by 5s every deferred
-                    // rebalance that could consult the mark has long
-                    // run, and without this the sets would accumulate
-                    // dead-window wrappers for the whole session.
-                    imports.gi.GLib.timeout_add(imports.gi.GLib.PRIORITY_DEFAULT, 5000, () => {
-                        dyingWindows.delete(win);
-                        settlingWindows.delete(win);
-                        return imports.gi.GLib.SOURCE_REMOVE;
-                    });
+                    markDying(win);
                     imports.gi.GLib.idle_add(imports.gi.GLib.PRIORITY_DEFAULT, () => {
                         if (thisGeneration !== enableGeneration) return imports.gi.GLib.SOURCE_REMOVE;
                         const current = scrollableTilingState.get(key);
@@ -3773,8 +3729,7 @@ const enable = () => {
                 // duplicated elsewhere in this file for the same reason.
                 const lm = imports.ui.main.layoutManager;
                 const winMonitorIndex = typeof win.get_monitor === 'function' ? win.get_monitor() : null;
-                const monitor = (Number.isInteger(winMonitorIndex) && lm.monitors[winMonitorIndex])
-                    ? lm.monitors[winMonitorIndex] : lm.primaryMonitor;
+                const monitor = monitorForIndex(lm.monitors, winMonitorIndex, lm.primaryMonitor);
                 const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
 
                 platform.reset_window(win);
@@ -3817,7 +3772,7 @@ const enable = () => {
                 // Pruning here un-marked the window at exactly the
                 // wrong moment (live-confirmed via debug logging: the
                 // guard saw an empty set milliseconds after the mark
-                // was added, re-layouted the dead sibling, and crashed
+                // was added, re-laid out the dead sibling, and crashed
                 // Cinnamon). Those two sets clean themselves up on a
                 // delayed timer in the unmanaging hooks instead.
             } catch (e) {

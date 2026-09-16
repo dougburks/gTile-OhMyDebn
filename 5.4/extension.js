@@ -4,7 +4,7 @@ const { gtile } = require('./gTile');
  * called when extension is loaded
  */
 function init(metadata) {
-    //extensionMeta holds your metadata.json info
+    // metadata holds this extension's metadata.json contents
     gtile.init(metadata);
 }
 

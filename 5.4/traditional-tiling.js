@@ -10,12 +10,12 @@
 // rebalance, not the "leave a gap until something else reuses it" a
 // flat-pointer design would give.
 //
-// Two modes share this exact same tree - "Traditional tiling" is
-// "Traditional Full" capped at 3 leaves: once a tree already has 3
-// leaves, the *next* window discards it and starts a fresh one-leaf tree
-// instead of splitting further (matching the shipped "window 4 covers
-// whatever's already there" behavior) - passed as `maxLeaves` to
-// treeInsert (3 for capped, null for uncapped).
+// Two modes share this exact same tree - "Traditional tiling (3 windows)"
+// is "Traditional tiling (unlimited)" capped at 3 leaves: once a tree
+// already has 3 leaves, the *next* window discards it and starts a fresh
+// one-leaf tree instead of splitting further (matching the shipped
+// "window 4 covers whatever's already there" behavior) - passed as
+// `maxLeaves` to treeInsert (3 for capped, null for uncapped).
 //
 // Regions are fractions (0..1) of the usable monitor area, not pixels or
 // a grid - converted to pixels at the point of application. No
@@ -52,8 +52,12 @@ function treeLeafDepth(leaf) {
 // keeps the existing window in the first half, `second` gets `newWindow`
 // in the second half. Axis alternates by the leaf's own current depth
 // (even depth = vertical/side-by-side, odd = horizontal/stacked) rather
-// than a separately-tracked counter, so it self-corrects after any
-// rebalance instead of needing to be kept in sync by hand. Does not
+// than a separately-tracked counter, so nothing needs keeping in sync by
+// hand. Not strictly alternating after a collapse, though: treeRemove
+// keeps each surviving split's stored orientation while depths shrink,
+// so a later insert can split on the same axis as its new parent (e.g.
+// A|B|C side by side instead of a nested stack) - a valid layout, just
+// not the textbook dwindle one. Does not
 // splice the new split node into the tree - the caller does that (the
 // two callers, treeInsert and a fresh-tree start, need it done
 // differently).
@@ -96,7 +100,7 @@ function treeSplitLeaf(leaf, newWindow) {
 // state: { root, insertionLeaf, leafCount } - pass { root: null,
 // insertionLeaf: null, leafCount: 0 } for an empty/new tree. maxLeaves:
 // 3 for the capped mode, null (or any falsy value) for uncapped
-// "Traditional Full".
+// "Traditional tiling (unlimited)".
 //
 // Returns { root, insertionLeaf, leafCount, moves }. moves lists windows
 // that were ALREADY placed and need to physically move to make room
