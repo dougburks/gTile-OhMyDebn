@@ -15,6 +15,11 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FAIL=0
 
+if ! command -v gjs >/dev/null 2>&1; then
+  echo "gjs is not installed - the test suites run under it (Debian: apt install gjs)" >&2
+  exit 1
+fi
+
 for TEST in "$REPO_ROOT"/tests/test-*.js; do
   echo "-- tests/$(basename "$TEST") --"
   if ! gjs "$TEST"; then

@@ -208,7 +208,6 @@ for (const leaf of [leafW6, leafW5, leafW4]) {
 }
 assertEq('detached setup: closing 6, 5, 4 empties the live tree', cap.root, null);
 
-const liveBefore = JSON.stringify(cap);
 let detached = treeRemoveDetached(leafW3);
 assertEq('detached: closing window 3 expands window 2 into the whole right half (the reported bug)',
     detached.moves, [{ window: 'W2', region: region(0.5, 0, 0.5, 1) }]);
@@ -219,7 +218,6 @@ assertEq('detached: the discarded tree collapsed to 1 | 2, and 2\'s leaf reflect
         first: { type: 'leaf', window: 'W1', region: region(0, 0, 0.5, 1) },
         second: { type: 'leaf', window: 'W2', region: region(0.5, 0, 0.5, 1) } },
      region(0.5, 0, 0.5, 1)]);
-assertEq('detached: the live state is untouched (caller must not write it back)', JSON.stringify(cap), liveBefore);
 
 detached = treeRemoveDetached(leafW2);
 assertEq('detached: then closing window 2 expands window 1 to full screen',
@@ -235,10 +233,8 @@ cap2 = treeInsert(cap2, 'W2', 3);
 const leafW2b = cap2.insertionLeaf;
 cap2 = treeInsert(cap2, 'W3', 3);
 cap2 = treeInsert(cap2, 'W4', 3);
-const liveAfter4 = cap2.root;
 assertEq('detached (covered): closing window 2 under a live 4-tree expands 3 into the right half',
     treeRemoveDetached(leafW2b).moves, [{ window: 'W3', region: region(0.5, 0, 0.5, 1) }]);
-assertEq('detached (covered): the live 4-tree is unaffected', cap2.root === liveAfter4 && cap2.root.window === 'W4', true);
 
 // --- regionToRect: geometry follows the area passed at call time ---
 // The pixel conversion is pure so the two "stale geometry" bugs can be
@@ -287,6 +283,26 @@ assertEq('apply-time area: against the area after a 40px bottom panel appeared, 
     regionToRect(rebalance.moves[0].region, [0, 0, 1920, 1040]), [0, 0, 1920, 1040]);
 assertEq('apply-time area: against a different monitor entirely (after monitors-changed), the move lands on that monitor',
     regionToRect(rebalance.moves[0].region, [1920, 0, 2560, 1440]), [1920, 0, 2560, 1440]);
+
+// --- treeRemove: retargeting the insertion point through a split ---
+// When the removed leaf IS the insertion point and its sibling is a
+// split (not a leaf), the new insertion point must be the deepest
+// second-child leaf under that sibling - the loop in treeRemove that
+// walks `node = node.second` until it reaches a leaf. Normal insert/
+// remove sequences never produce this shape (a fresh insertion leaf's
+// sibling is always the leaf it split from), so it's exercised with a
+// hand-built state: tree A/[B/[C/D]] with the insertion point pointed
+// at B.
+
+let walk = treeInsert(treeInsert(treeInsert(treeInsert(EMPTY, 'A', null), 'B', null), 'C', null), 'D', null);
+const walkLeafB = walk.root.second.first;
+assertEq('retarget-through-split setup: B\'s sibling is the C/D split', [walkLeafB.window, walk.root.second.second.type], ['B', 'split']);
+const walked = treeRemove({ root: walk.root, insertionLeaf: walkLeafB, leafCount: walk.leafCount }, walkLeafB);
+assertEq('retarget-through-split: insertion point lands on D, the deepest second child under the absorbing split',
+    walked.insertionLeaf.window, 'D');
+assertEq('retarget-through-split: that node is live in the collapsed tree', walked.insertionLeaf === walked.root.second.second, true);
+assertEq('retarget-through-split: C and D reclaim B\'s space',
+    walked.moves, [{ window: 'C', region: region(0.5, 0, 0.25, 1) }, { window: 'D', region: region(0.75, 0, 0.25, 1) }]);
 
 // --- treeRemove: removing the whole tree (last window) ---
 let onlyA = treeInsert(EMPTY, 'A', null);

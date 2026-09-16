@@ -67,6 +67,17 @@ assertEq('a rect extending past the usable area still counts as touching that ed
 assertEq('odd gap size floors the half gap (internal sides pad by floor(gap/2))',
     computeGappedRect(640, 300, 640, 400, ...U, 9), [644, 304, 632, 392]);
 
+// A second monitor to the right of the first: its usable area starts at
+// x=1920, so "touches the left edge" means x <= 1920 there, not x <= 0 -
+// the case a single-monitor test suite never exercises.
+{
+    const U2 = [1920, 0, 2560, 1440];
+    assertEq('offset monitor: left-half tile at the monitor\'s own left edge gets the full gap there',
+        computeGappedRect(1920, 0, 1280, 1440, ...U2, 10), [1930, 10, 1265, 1420]);
+    assertEq('offset monitor: right-half tile gets the half gap on its internal left side',
+        computeGappedRect(3200, 0, 1280, 1440, ...U2, 10), [3205, 10, 1265, 1420]);
+}
+
 assertEq('gap of 0 leaves the rect untouched',
     computeGappedRect(0, 40, 960, 1040, ...U, 0), [0, 40, 960, 1040]);
 

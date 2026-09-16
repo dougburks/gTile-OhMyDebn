@@ -17,15 +17,11 @@ GTILE_JS="$REPO_ROOT/5.4/gTile.js"
 
 # Add a new "<canonical file>" entry here whenever a new pure-logic file
 # gets embedded into gTile.js this way.
-SYNCED_FILES=(
-  tile-rules.js
-  traditional-tiling.js
-  scrollable-tiling.js
-  screen-area.js
-  gap-math.js
-  tile-labels.js
-  grid-ui-math.js
-)
+# Derived from the markers actually present in gTile.js rather than a
+# hand-maintained list, so a new "// BEGIN x.js" block can't go unchecked.
+# The reverse direction is covered below: every pure module in 5.4/ must
+# have a block.
+mapfile -t SYNCED_FILES < <(grep -oP '^// BEGIN \K\S+' "$GTILE_JS")
 
 FAIL=0
 for NAME in "${SYNCED_FILES[@]}"; do
@@ -36,6 +32,18 @@ for NAME in "${SYNCED_FILES[@]}"; do
   # at column 0) so an indented prose comment that happens to mention a
   # marker can't reopen the sed range and swallow the rest of the file.
   NAME_RE="${NAME//./\\.}"
+  if [ ! -f "$CANONICAL" ]; then
+    echo "FAIL - gTile.js has a BEGIN/END $NAME block but 5.4/$NAME does not exist"
+    FAIL=1
+    continue
+  fi
+  # A missing/mistyped END marker would otherwise make the sed range run
+  # to end-of-file and show up as a bewildering thousands-of-lines "drift".
+  if ! grep -q "^// END $NAME_RE\$" "$GTILE_JS"; then
+    echo "FAIL - gTile.js has a BEGIN $NAME marker but no matching END $NAME marker"
+    FAIL=1
+    continue
+  fi
   EXTRACTED=$(sed -n "/^\/\/ BEGIN $NAME_RE\$/,/^\/\/ END $NAME_RE\$/p" "$GTILE_JS" | sed '1d;$d')
   # The canonical file carries its own file-level header comment (not
   # copied into gTile.js, which has its own surrounding marker comment
@@ -44,7 +52,7 @@ for NAME in "${SYNCED_FILES[@]}"; do
   CANONICAL_BODY=$(awk 'f{print} /^$/{f=1}' "$CANONICAL")
 
   if [ -z "$EXTRACTED" ]; then
-    echo "FAIL - no BEGIN/END $NAME markers found in $GTILE_JS"
+    echo "FAIL - the BEGIN/END $NAME block in $GTILE_JS is empty"
     FAIL=1
     continue
   fi
@@ -54,6 +62,17 @@ for NAME in "${SYNCED_FILES[@]}"; do
   else
     echo "FAIL - gTile.js's embedded copy has drifted from $NAME"
     diff <(echo "$CANONICAL_BODY") <(echo "$EXTRACTED")
+    FAIL=1
+  fi
+done
+
+
+# Reverse direction: every pure module next to gTile.js must be embedded.
+for CANONICAL in "$REPO_ROOT"/5.4/*.js; do
+  NAME=$(basename "$CANONICAL")
+  case "$NAME" in gTile.js | extension.js) continue ;; esac
+  if ! grep -q "^// BEGIN ${NAME//./\\.}\$" "$GTILE_JS"; then
+    echo "FAIL - 5.4/$NAME exists but has no BEGIN/END block in gTile.js"
     FAIL=1
   fi
 done

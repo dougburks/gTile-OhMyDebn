@@ -54,39 +54,44 @@ eval(readFile('scrollable-tiling.js'));
 
 const layout = schema['layout'];
 check('has a layout of type "layout"', !!layout && layout.type === 'layout');
+if (!layout) {
+    // Nothing below can be checked without it - stop with a summary
+    // rather than an uncaught TypeError on layout.pages.
+    print('');
+    print(total + ' check(s), ' + failures + ' failure(s)');
+    imports.system.exit(1);
+}
 
 // --- Every page exists, every section exists, every section key is
 // defined at the top level ---
 
 const referencedKeys = {};
-let pagesOk = true, sectionsOk = true, keysOk = true;
-let missingDetail = '';
+// One detail list per check, so a failure is reported under the check
+// it belongs to (a single shared "last failure" string used to leak
+// e.g. a page failure into the keys check's message).
+const missingPages = [], missingSections = [], missingKeys = [];
 for (const page of (layout.pages || [])) {
     const pageDef = layout[page];
     if (!pageDef || pageDef.type !== 'page') {
-        pagesOk = false;
-        missingDetail = 'page ' + page;
+        missingPages.push(page);
         continue;
     }
     for (const section of (pageDef.sections || [])) {
         const sectionDef = layout[section];
         if (!sectionDef || sectionDef.type !== 'section') {
-            sectionsOk = false;
-            missingDetail = 'section ' + section;
+            missingSections.push(section);
             continue;
         }
         for (const key of (sectionDef.keys || [])) {
             referencedKeys[key] = true;
-            if (!schema[key]) {
-                keysOk = false;
-                missingDetail = 'key ' + key + ' (section ' + section + ')';
-            }
+            if (!schema[key])
+                missingKeys.push(key + ' (section ' + section + ')');
         }
     }
 }
-check('every page listed in the layout is defined', pagesOk, missingDetail);
-check('every section listed in a page is defined', sectionsOk, missingDetail);
-check('every key listed in a section is defined at the top level', keysOk, missingDetail);
+check('every page listed in the layout is defined', missingPages.length === 0, missingPages.join(', '));
+check('every section listed in a page is defined', missingSections.length === 0, missingSections.join(', '));
+check('every key listed in a section is defined at the top level', missingKeys.length === 0, missingKeys.join(', '));
 
 // --- No orphaned widget definitions: every top-level setting that
 // renders a widget must be reachable through some section. "generic"
@@ -102,8 +107,7 @@ check('no orphaned widget definitions outside the layout', orphans.length === 0,
 
 // --- Per-type default sanity ---
 
-let checkboxOk = true, comboOk = true, spinOk = true, keybindOk = true;
-let typeDetail = '';
+const badCheckboxes = [], badCombos = [], badSpins = [], badKeybinds = [];
 for (const key in schema) {
     if (key === 'layout') continue;
     const def = schema[key];
@@ -111,39 +115,31 @@ for (const key in schema) {
         case 'checkbox':
             // The actual historical bug: a default of "false" (string)
             // is truthy in JS and silently inverts the behavior.
-            if (typeof def.default !== 'boolean') {
-                checkboxOk = false;
-                typeDetail = key;
-            }
+            if (typeof def.default !== 'boolean')
+                badCheckboxes.push(key);
             break;
         case 'combobox': {
             const values = Object.keys(def.options || {}).map(k => def.options[k]);
-            if (values.indexOf(def.default) === -1) {
-                comboOk = false;
-                typeDetail = key;
-            }
+            if (values.indexOf(def.default) === -1)
+                badCombos.push(key);
             break;
         }
         case 'spinbutton':
             if (typeof def.default !== 'number' ||
                 typeof def.min !== 'number' || typeof def.max !== 'number' ||
-                def.default < def.min || def.default > def.max) {
-                spinOk = false;
-                typeDetail = key;
-            }
+                def.default < def.min || def.default > def.max)
+                badSpins.push(key);
             break;
         case 'keybinding':
-            if (typeof def.default !== 'string' || def.default.length === 0) {
-                keybindOk = false;
-                typeDetail = key;
-            }
+            if (typeof def.default !== 'string' || def.default.length === 0)
+                badKeybinds.push(key);
             break;
     }
 }
-check('every checkbox default is a real boolean, not a string', checkboxOk, typeDetail);
-check('every combobox default is one of its own options', comboOk, typeDetail);
-check('every spinbutton default is numeric and within its min/max', spinOk, typeDetail);
-check('every keybinding default is a non-empty string', keybindOk, typeDetail);
+check('every checkbox default is a real boolean, not a string', badCheckboxes.length === 0, badCheckboxes.join(', '));
+check('every combobox default is one of its own options', badCombos.length === 0, badCombos.join(', '));
+check('every spinbutton default is numeric and within its min/max', badSpins.length === 0, badSpins.join(', '));
+check('every keybinding default is a non-empty string', badKeybinds.length === 0, badKeybinds.join(', '));
 
 // --- Schema defaults agree with the pure runtime fallbacks: the
 // normalizers are what an unset/garbage value falls back to at
@@ -159,6 +155,21 @@ check('scroll-animation-duration schema default matches normalizeScrollDuration\
 check('scrollable-column-width schema default matches columnWidthFraction\'s fallback',
     schema['scrollable-column-width'].default === columnWidthFraction(undefined) * 100,
     schema['scrollable-column-width'].default + ' vs ' + columnWidthFraction(undefined) * 100);
+
+// --- Schema ranges agree with the pure runtime clamps too: the
+// spinbutton's min/max is what the UI lets a user pick, the clamp is what
+// the code accepts from a value set any other way (dconf, an old
+// setting). They had drifted (clamp 10..100 vs UI 20..80, clamp 1000ms vs
+// UI 500ms) before the code started reading its bounds from one place. ---
+
+check('scrollable-column-width schema min/max match the code\'s clamp bounds',
+    schema['scrollable-column-width'].min === SCROLLABLE_COLUMN_WIDTH_MIN_PERCENT &&
+    schema['scrollable-column-width'].max === SCROLLABLE_COLUMN_WIDTH_MAX_PERCENT,
+    schema['scrollable-column-width'].min + '..' + schema['scrollable-column-width'].max +
+    ' vs ' + SCROLLABLE_COLUMN_WIDTH_MIN_PERCENT + '..' + SCROLLABLE_COLUMN_WIDTH_MAX_PERCENT);
+check('scroll-animation-duration schema max matches the code\'s clamp',
+    schema['scroll-animation-duration'].max === SCROLL_ANIMATION_MAX_MS,
+    schema['scroll-animation-duration'].max + ' vs ' + SCROLL_ANIMATION_MAX_MS);
 
 // The Super+L cycle (TILING_MODE_CYCLE in scrollable-tiling.js) and
 // the tiling-mode combobox options must be exactly the same set of
@@ -183,6 +194,9 @@ check('scrollable-column-width schema default matches columnWidthFraction\'s fal
 // exempt by construction.
 
 const bundle = readFile('gTile.js');
+// Keys the bundle actually wires up, collected by the two scans below and
+// reused by the dead-keybinding check after them.
+const referencedByBundle = {};
 
 {
     // bindProperty(direction, 'key', ...) / bindWithObject(target, 'key', ...)
@@ -192,6 +206,7 @@ const bundle = readFile('gTile.js');
     const missingBindings = [];
     while ((match = bindingRe.exec(bundle)) !== null) {
         bindingCount++;
+        referencedByBundle[match[1]] = true;
         if (!schema[match[1]] && missingBindings.indexOf(match[1]) === -1)
             missingBindings.push(match[1]);
     }
@@ -207,6 +222,7 @@ const bundle = readFile('gTile.js');
     const missingHotkeys = [];
     while ((match = settingKeyRe.exec(bundle)) !== null) {
         hotkeyCount++;
+        referencedByBundle[match[1]] = true;
         if (!schema[match[1]] && missingHotkeys.indexOf(match[1]) === -1)
             missingHotkeys.push(match[1]);
     }
@@ -216,12 +232,14 @@ const bundle = readFile('gTile.js');
 
 {
     // The reverse direction: a keybinding defined in the schema but
-    // never referenced by the bundle would render an editable key in
-    // the settings UI that does nothing.
+    // never wired up by the bundle would render an editable key in the
+    // settings UI that does nothing. "Wired up" means one of the two
+    // binding forms scanned above - a bare mention of the key's name in
+    // a string (a comment, a log line) doesn't count.
     const deadKeybindings = [];
     for (const key in schema) {
         if (key === 'layout' || schema[key].type !== 'keybinding') continue;
-        if (bundle.indexOf("'" + key + "'") === -1)
+        if (!referencedByBundle[key])
             deadKeybindings.push(key);
     }
     check('every keybinding in the schema is referenced by gTile.js (no dead hotkey settings)',
