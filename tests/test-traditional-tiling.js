@@ -240,6 +240,54 @@ assertEq('detached (covered): closing window 2 under a live 4-tree expands 3 int
     treeRemoveDetached(leafW2b).moves, [{ window: 'W3', region: region(0.5, 0, 0.5, 1) }]);
 assertEq('detached (covered): the live 4-tree is unaffected', cap2.root === liveAfter4 && cap2.root.window === 'W4', true);
 
+// --- regionToRect: geometry follows the area passed at call time ---
+// The pixel conversion is pure so the two "stale geometry" bugs can be
+// pinned as contracts: (1) a new window's first placement resolved at
+// settle time from its leaf's CURRENT region, after a second window has
+// already split it; (2) a rebalance move resolved against the usable
+// area as it is NOW (monitor changed, panel appeared), not as captured
+// when the window was created.
+
+const area1080 = [0, 0, 1920, 1080];
+assertEq('regionToRect: the full region is the whole usable area',
+    regionToRect(TREE_FULL_REGION, area1080), [0, 0, 1920, 1080]);
+assertEq('regionToRect: a right-half region on an offset monitor with a top panel',
+    regionToRect(region(0.5, 0, 0.5, 1), [1920, 28, 2560, 1412]), [3200, 28, 1280, 1412]);
+
+// (1) settle-time placement: A is created (full screen), then B arrives
+// before A has painted. A's leaf - the one reference its placement
+// resolver holds - already shows the post-split half, so resolving at
+// settle time places A in the left half; the creation-time rect (what
+// the tree path used to trust) would have overlapped B.
+let settle = treeInsert(EMPTY, 'A', null);
+const settleLeafA = settle.insertionLeaf;
+const creationTimeRectA = regionToRect(settleLeafA.region, area1080);
+settle = treeInsert(settle, 'B', null);
+assertEq('settle race: A\'s creation-time rect was the full screen',
+    creationTimeRectA, [0, 0, 1920, 1080]);
+assertEq('settle race: resolving A\'s placement from its leaf AFTER B split it gives the left half (the bug)',
+    regionToRect(settleLeafA.region, area1080), [0, 0, 960, 1080]);
+assertEq('settle race: B\'s own leaf resolves to the right half, so the two no longer overlap',
+    regionToRect(settle.insertionLeaf.region, area1080), [960, 0, 960, 1080]);
+settle = treeInsert(settle, 'C', null);
+assertEq('settle race: a third window before anything painted still resolves A to the left half and B to the top-right quarter',
+    [regionToRect(settleLeafA.region, area1080), regionToRect(settle.root.second.first.region, area1080)],
+    [[0, 0, 960, 1080], [960, 0, 960, 540]]);
+
+// (2) apply-time area: the same rebalance move lands differently once the
+// usable area has changed - which is exactly why the area must be read
+// when the move is applied, not when the window was created.
+let geo = treeInsert(treeInsert(EMPTY, 'A', null), 'B', null);
+const geoLeafB = geo.insertionLeaf;
+const rebalance = treeRemove(geo, geoLeafB);
+assertEq('apply-time area: closing B moves A to the full region', rebalance.moves, [{ window: 'A', region: region(0, 0, 1, 1) }]);
+assertEq('apply-time area: against the creation-time area that is the full 1920x1080',
+    regionToRect(rebalance.moves[0].region, area1080), [0, 0, 1920, 1080]);
+assertEq('apply-time area: against the area after a 40px bottom panel appeared, the move shrinks to fit (the bug: it used to keep 1080)',
+    regionToRect(rebalance.moves[0].region, [0, 0, 1920, 1040]), [0, 0, 1920, 1040]);
+assertEq('apply-time area: against a different monitor entirely (after monitors-changed), the move lands on that monitor',
+    regionToRect(rebalance.moves[0].region, [1920, 0, 2560, 1440]), [1920, 0, 2560, 1440]);
+
 // --- treeRemove: removing the whole tree (last window) ---
 let onlyA = treeInsert(EMPTY, 'A', null);
 assertEq('remove last window: tree becomes empty',

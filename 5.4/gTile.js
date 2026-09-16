@@ -496,6 +496,36 @@ function treeRemoveDetached(leaf) {
     const removal = treeRemove({ root: treeRootOf(leaf), insertionLeaf: null, leafCount: 0 }, leaf);
     return { root: removal.root, moves: removal.moves };
 }
+
+// Pixel rect [x, y, width, height] for a tree region (fractions of the
+// usable area) within `usableArea` ([x, y, width, height] in pixels, as
+// getUsableScreenArea returns it). Pure so the one contract that
+// matters can be pinned by a test: the rect follows whatever area is
+// passed *now*. gTile.js used to capture the usable area once at
+// window-created time and reuse it for every later move of that
+// window's siblings - stale after a monitor change (the state maps are
+// cleared then, so those windows' closes take the detached path) or
+// after a panel appeared/resized, so survivors were rebalanced to
+// coordinates for a layout that no longer existed. Callers now resolve
+// the area from the moved window's *current* monitor at apply time. The
+// same goes for a new window's own first placement: its leaf's region
+// can shrink before it ever paints (a second window launched an instant
+// later splits it), so that placement is resolved from the leaf's
+// current region at settle time, not from creation-time coordinates -
+// the scrollable mode already worked this way; the tree modes didn't,
+// and two windows opened together overlapped until the next rebalance.
+function regionToRect(region, usableArea) {
+    const areaX = usableArea[0];
+    const areaY = usableArea[1];
+    const areaWidth = usableArea[2];
+    const areaHeight = usableArea[3];
+    return [
+        areaX + region.x * areaWidth,
+        areaY + region.y * areaHeight,
+        region.width * areaWidth,
+        region.height * areaHeight,
+    ];
+}
 // END traditional-tiling.js
 
 // Kept byte-for-byte in sync with the standalone 5.4/scrollable-tiling.js
@@ -3256,19 +3286,23 @@ const enable = () => {
         // for "Traditional Full" (uncapped) - the only difference between
         // the two modes, since they share the exact same tree.
         const handleTreeTilingWindowCreated = (win, stateMap, maxLeaves) => {
-            const { monitor, key } = resolveMonitorAndKey(win);
+            const { key } = resolveMonitorAndKey(win);
 
             const prevState = stateMap.get(key) || { root: null, insertionLeaf: null, leafCount: 0 };
             const result = treeInsert(prevState, win, maxLeaves);
             stateMap.set(key, { root: result.root, insertionLeaf: result.insertionLeaf, leafCount: result.leafCount });
 
-            const [screenX, screenY, screenWidth, screenHeight] = getUsableScreenArea(monitor);
-            const rectForRegion = (region) => [
-                screenX + region.x * screenWidth,
-                screenY + region.y * screenHeight,
-                region.width * screenWidth,
-                region.height * screenHeight,
-            ];
+            // Geometry is resolved from a window's CURRENT monitor at the
+            // moment it's applied, never from coordinates captured here at
+            // creation - see regionToRect's comment for the two stale-
+            // geometry bugs that came from capturing. A window reporting
+            // no monitor (-1, mid-unmanage or mid-monitor-change) falls
+            // back to the primary monitor's area.
+            const usableAreaForWindow = (w) => {
+                const lm = imports.ui.main.layoutManager;
+                const mon = monitorForIndex(lm.monitors, w.get_monitor(), lm.primaryMonitor);
+                return getUsableScreenArea(mon);
+            };
             const applyMove = (move, logPrefix) => {
                 // A dying or still-settling window must not be touched
                 // at all - see dyingWindows'/settlingWindows' own
@@ -3277,7 +3311,7 @@ const enable = () => {
                 if (dyingWindows.has(move.window) || settlingWindows.has(move.window))
                     return;
                 try {
-                    const [x, y, w, h] = rectForRegion(move.region);
+                    const [x, y, w, h] = regionToRect(move.region, usableAreaForWindow(move.window));
                     // Same glide the scrollable mode uses (see
                     // animateActorFromPrevious above) - tree splits and
                     // rebalances are mostly resizes, which it handles
@@ -3308,8 +3342,24 @@ const enable = () => {
                 applyMove(move, 'tree-tiling move');
             }
 
-            const [areaX, areaY, areaWidth, areaHeight] = rectForRegion(result.insertionLeaf.region);
-            hideNewWindowThenPlace(win, areaX, areaY, areaWidth, areaHeight);
+            // The new window's own placement is resolved at settle time
+            // (first frame) from its leaf's CURRENT region, like the
+            // scrollable mode does: another window launched an instant
+            // later splits this leaf before this window ever paints, and
+            // the settlingWindows guard keeps that split's move list from
+            // touching this window - so without this it would settle at
+            // its full creation-time rect, overlapping the newcomer. A
+            // window that started unmanaging while hidden is left alone.
+            // ownLeaf is the live node for this window for its whole
+            // lifetime in the tree (see treeSplitLeaf's comment).
+            const ownLeaf = result.insertionLeaf;
+            const resolvePlacement = () => {
+                if (dyingWindows.has(win))
+                    return null;
+                return { rect: regionToRect(ownLeaf.region, usableAreaForWindow(win)) };
+            };
+            const [areaX, areaY, areaWidth, areaHeight] = regionToRect(ownLeaf.region, usableAreaForWindow(win));
+            hideNewWindowThenPlace(win, areaX, areaY, areaWidth, areaHeight, resolvePlacement);
 
             // 'unmanaging' (fires before destruction, object identity
             // still valid - unlike 'unmanaged', which fires after)
@@ -3337,7 +3387,6 @@ const enable = () => {
             // deferred removal reads stateMap fresh when it actually
             // runs, already reflecting any earlier deferred removal that
             // ran first.
-            const ownLeaf = result.insertionLeaf;
             try {
                 win.connect('unmanaging', () => {
                     // Synchronously, before any deferred work anywhere

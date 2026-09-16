@@ -211,3 +211,33 @@ function treeRemoveDetached(leaf) {
     const removal = treeRemove({ root: treeRootOf(leaf), insertionLeaf: null, leafCount: 0 }, leaf);
     return { root: removal.root, moves: removal.moves };
 }
+
+// Pixel rect [x, y, width, height] for a tree region (fractions of the
+// usable area) within `usableArea` ([x, y, width, height] in pixels, as
+// getUsableScreenArea returns it). Pure so the one contract that
+// matters can be pinned by a test: the rect follows whatever area is
+// passed *now*. gTile.js used to capture the usable area once at
+// window-created time and reuse it for every later move of that
+// window's siblings - stale after a monitor change (the state maps are
+// cleared then, so those windows' closes take the detached path) or
+// after a panel appeared/resized, so survivors were rebalanced to
+// coordinates for a layout that no longer existed. Callers now resolve
+// the area from the moved window's *current* monitor at apply time. The
+// same goes for a new window's own first placement: its leaf's region
+// can shrink before it ever paints (a second window launched an instant
+// later splits it), so that placement is resolved from the leaf's
+// current region at settle time, not from creation-time coordinates -
+// the scrollable mode already worked this way; the tree modes didn't,
+// and two windows opened together overlapped until the next rebalance.
+function regionToRect(region, usableArea) {
+    const areaX = usableArea[0];
+    const areaY = usableArea[1];
+    const areaWidth = usableArea[2];
+    const areaHeight = usableArea[3];
+    return [
+        areaX + region.x * areaWidth,
+        areaY + region.y * areaHeight,
+        region.width * areaWidth,
+        region.height * areaHeight,
+    ];
+}
