@@ -6,8 +6,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2022-09-01 22:20+0100\n"
+"Report-Msgid-Bugs-To: https://github.com/dougburks/gTile-OhMyDebn/issues\n"
+"POT-Creation-Date: 2026-09-16 18:19+0000\n"
 "PO-Revision-Date: 2023-03-31 10:43+0200\n"
 "Last-Translator: Dragone2 <dragone2@risposteinformatiche.it>\n"
 "Language-Team: \n"
@@ -18,179 +18,72 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 "X-Generator: Poedit 3.0.1\n"
 
-#: extension.js:43 3.8/gTile.js:303 5.4/gTile.js:303
+#: 5.4/gTile.js:959
 msgid "Auto close"
 msgstr "Chiudi automaticamente"
 
-#: extension.js:44 3.8/gTile.js:304 5.4/gTile.js:304
-msgid "Animations"
-msgstr "Animazioni"
-
-#: extension.js:45 3.8/gTile.js:305 5.4/gTile.js:305
-msgid "Auto tile main and list"
-msgstr "Riquadro automatico principale ed elenco"
-
-#: extension.js:46 3.8/gTile.js:306 5.4/gTile.js:306
-msgid "Auto tile two lists"
-msgstr "Affianca automaticamente due elenchi"
-
-#. metadata.json->name
-msgid "gTile"
-msgstr "gTile"
-
-#. metadata.json->description
-msgid "Tile your windows as you like."
-msgstr "Affianca le finestre come preferisci."
-
-#. settings-schema.json->headerKeys->description
-msgid "Hotkeys:"
-msgstr "Tasti di scelta rapida:"
-
-#. settings-schema.json->hotkey->description
-#. 3.8->settings-schema.json->hotkey->description
-#. 5.4->settings-schema.json->hotkey->description
-msgid "Global Hotkey for gTile"
-msgstr "Tasto di scelta rapida globale per gTile"
-
-#. settings-schema.json->headerBehavior->description
-msgid "Behavior:"
-msgstr "Comportamento:"
-
-#. settings-schema.json->animation->description
-#. 3.8->settings-schema.json->animation->description
 #. 5.4->settings-schema.json->animation->description
-msgid "Animation"
+#: 5.4/gTile.js:960
+#, fuzzy
+msgid "Popup animation"
 msgstr "Animazione"
 
-#. settings-schema.json->autoclose->description
-#. 3.8->settings-schema.json->autoclose->description
-#. 5.4->settings-schema.json->autoclose->description
-msgid "Auto-Close"
-msgstr "Auto-chiudi"
-
-#. settings-schema.json->header1->description
-msgid "Layout for Button 1:"
-msgstr "Stile per il tasto 1:"
-
-#. settings-schema.json->gridbutton1x->units
-#. settings-schema.json->gridbutton2x->units
-#. settings-schema.json->gridbutton3x->units
-#. settings-schema.json->gridbutton4x->units
-msgid "x"
-msgstr "x"
-
-#. settings-schema.json->gridbutton1x->description
-#. settings-schema.json->gridbutton2x->description
-#. settings-schema.json->gridbutton3x->description
-#. settings-schema.json->gridbutton4x->description
-#. 3.8->settings-schema.json->columns->description
-#. 3.8->settings-schema.json->grid1x->description
-#. 3.8->settings-schema.json->grid2x->description
-#. 3.8->settings-schema.json->grid3x->description
-#. 3.8->settings-schema.json->grid4x->description
-#. 5.4->settings-schema.json->columns->description
-#. 5.4->settings-schema.json->grid1x->description
-#. 5.4->settings-schema.json->grid2x->description
-#. 5.4->settings-schema.json->grid3x->description
-#. 5.4->settings-schema.json->grid4x->description
-msgid "Columns"
-msgstr "Colonne"
-
-#. settings-schema.json->gridbutton1y->units
-#. settings-schema.json->gridbutton2y->units
-#. settings-schema.json->gridbutton3y->units
-#. settings-schema.json->gridbutton4y->units
-msgid "y"
-msgstr "y"
-
-#. settings-schema.json->gridbutton1y->description
-#. settings-schema.json->gridbutton2y->description
-#. settings-schema.json->gridbutton3y->description
-#. settings-schema.json->gridbutton4y->description
-#. 3.8->settings-schema.json->rows->description
-#. 3.8->settings-schema.json->grid1y->description
-#. 3.8->settings-schema.json->grid2y->description
-#. 3.8->settings-schema.json->grid3y->description
-#. 3.8->settings-schema.json->grid4y->description
-#. 5.4->settings-schema.json->rows->description
-#. 5.4->settings-schema.json->grid1y->description
-#. 5.4->settings-schema.json->grid2y->description
-#. 5.4->settings-schema.json->grid3y->description
-#. 5.4->settings-schema.json->grid4y->description
-msgid "Rows"
-msgstr "Righe"
-
-#. settings-schema.json->header2->description
-msgid "Layout for Button 2:"
-msgstr "Stile per il tasto 2:"
-
-#. settings-schema.json->header3->description
-msgid "Layout for Button 3:"
-msgstr "Stile per il tasto 3:"
-
-#. settings-schema.json->header4->description
-msgid "Layout for Button 4:"
-msgstr "Stile per il tasto 4:"
-
-#. 3.8->settings-schema.json->hotkeys-tab->title
 #. 5.4->settings-schema.json->hotkeys-tab->title
 msgid "Hotkeys"
 msgstr "Tasti di scelta rapida"
 
-#. 3.8->settings-schema.json->behaviour-tab->title
-#. 3.8->settings-schema.json->behaviour-section->title
 #. 5.4->settings-schema.json->behaviour-tab->title
-#. 5.4->settings-schema.json->behaviour-section->title
 msgid "Behavior"
 msgstr "Comportamento"
 
-#. 3.8->settings-schema.json->layout-tab->title
 #. 5.4->settings-schema.json->layout-tab->title
 msgid "Layout"
 msgstr "Stile"
 
-#. 3.8->settings-schema.json->help->title
-#. 5.4->settings-schema.json->help->title
-msgid "Help"
-msgstr "Aiuto"
-
-#. 3.8->settings-schema.json->hotkey-section->title
 #. 5.4->settings-schema.json->hotkey-section->title
-msgid "Global Hotkey"
+#, fuzzy
+msgid "Global Hotkeys"
 msgstr "Tasto di scelta rapida globale"
 
-#. 3.8->settings-schema.json->keybindings-legend-section->title
+#. 5.4->settings-schema.json->tiling-hotkeys-section->title
+#, fuzzy
+msgid "Tiling Hotkeys"
+msgstr "Tasti di scelta rapida"
+
 #. 5.4->settings-schema.json->keybindings-legend-section->title
 msgid "Keybindings Legend (when open)"
 msgstr "Legenda combinazioni di tasti (quando aperto)"
 
-#. 3.8->settings-schema.json->grid1-section->title
+#. 5.4->settings-schema.json->overlay-section->title
+msgid "Grid Overlay"
+msgstr ""
+
+#. 5.4->settings-schema.json->gaps-section->title
+msgid "Gaps"
+msgstr ""
+
+#. 5.4->settings-schema.json->auto-tiling-section->title
+msgid "Automatic Tiling"
+msgstr ""
+
 #. 5.4->settings-schema.json->grid1-section->title
 msgid "Layout For Button 1"
 msgstr "Stile per il tasto 1"
 
-#. 3.8->settings-schema.json->grid2-section->title
 #. 5.4->settings-schema.json->grid2-section->title
 msgid "Layout For Button 2"
 msgstr "Stile per il tasto 2"
 
-#. 3.8->settings-schema.json->grid3-section->title
 #. 5.4->settings-schema.json->grid3-section->title
 msgid "Layout For Button 3"
 msgstr "Stile per il tasto 3"
 
-#. 3.8->settings-schema.json->grid4-section->title
 #. 5.4->settings-schema.json->grid4-section->title
 msgid "Layout For Button 4"
 msgstr "Stile per il tasto 4"
 
-#. 3.8->settings-schema.json->help-section->title
-#. 5.4->settings-schema.json->help-section->title
-msgid "More Info"
-msgstr "Maggiori Informazioni"
-
-#. 3.8->settings-schema.json->hotkeys-legend->description
 #. 5.4->settings-schema.json->hotkeys-legend->description
+#, fuzzy
 msgid ""
 "Escape:\t\t\tHide gTile\n"
 "Enter or Space:\tCommit current selection\n"
@@ -209,7 +102,9 @@ msgid ""
 "1:\t\t\t\tSelect the first grid layout\n"
 "2:\t\t\t\tSelect the second grid layout\n"
 "3:\t\t\t\tSelect the third grid layout\n"
-"4:\t\t\t\tSelect the fourth grid layout"
+"4:\t\t\t\tSelect the fourth grid layout\n"
+"\n"
+"With \"Show tile labels\" enabled, each tile also shows a letter - press two letters to tile the focused window to the rectangle spanning those two tiles."
 msgstr ""
 "Esc:\t\t\tNasconde gTile\n"
 "Invio o Spazio:\tConferma la selezione corrente\n"
@@ -230,72 +125,201 @@ msgstr ""
 "3:\t\t\t\tSeleziona il terzo layout della griglia\n"
 "4:\t\t\t\tSeleziona il quarto layout della griglia"
 
-#. 3.8->settings-schema.json->aspect-ratio->description
+#. 5.4->settings-schema.json->hotkey->description
+msgid "Global Hotkey for gTile"
+msgstr "Tasto di scelta rapida globale per gTile"
+
+#. 5.4->settings-schema.json->hotkey-open-settings->description
+msgid "Open gTile settings"
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-open-settings->tooltip
+msgid "Open this settings window, landing on the Behavior tab. Clear the binding to disable."
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-cycle-tiling-mode->description
+msgid "Cycle tiling mode"
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-cycle-tiling-mode->tooltip
+msgid "Cycle the Tiling mode setting forward through Off, Rule-based, Traditional (3 windows), Traditional (unlimited), and Scrollable, wrapping around, with an on-screen display showing the new mode. Only affects windows opened afterwards - existing windows stay where they are. Clear the binding to disable."
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-cycle-tiling-mode-backward->description
+msgid "Cycle tiling mode (backward)"
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-cycle-tiling-mode-backward->tooltip
+msgid "Same cycle as \"Cycle tiling mode\", stepping backward - so any mode is at most two presses away in one direction or the other. Clear the binding to disable."
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-focus-column-left->description
+msgid "Focus column to the left"
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-focus-column-left->tooltip
+msgid "Scrollable tiling only: focus the column left of the current one, scrolling it into view. Does nothing in other tiling modes. Clear the binding to disable."
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-focus-column-right->description
+msgid "Focus column to the right"
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-focus-column-right->tooltip
+msgid "Scrollable tiling only: focus the column right of the current one, scrolling it into view. Does nothing in other tiling modes. Clear the binding to disable."
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-move-column-left->description
+msgid "Move column left"
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-move-column-left->tooltip
+msgid "Scrollable tiling only: swap the focused window's column with its left neighbor. Does nothing in other tiling modes. Clear the binding to disable."
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-move-column-right->description
+msgid "Move column right"
+msgstr ""
+
+#. 5.4->settings-schema.json->hotkey-move-column-right->tooltip
+msgid "Scrollable tiling only: swap the focused window's column with its right neighbor. Does nothing in other tiling modes. Clear the binding to disable."
+msgstr ""
+
+#. 5.4->settings-schema.json->animation->tooltip
+msgid "Animate the gTile overlay popup (show/hide and grid transitions). Automatic tiling's window animation has its own \"Tiling animation duration\" setting."
+msgstr ""
+
+#. 5.4->settings-schema.json->autoclose->description
+msgid "Auto-Close"
+msgstr "Auto-chiudi"
+
 #. 5.4->settings-schema.json->aspect-ratio->description
 msgid "Use monitor aspect ratio"
 msgstr "Usa le proporzioni dello schermo"
 
-#. 3.8->settings-schema.json->aspect-ratio->tooltip
 #. 5.4->settings-schema.json->aspect-ratio->tooltip
-msgid ""
-"Should the popup's grid reflect the current monitor's aspect ratio or not."
-msgstr ""
-"La griglia del popup dovrebbe riflettere o meno le proporzioni dello schermo "
-"corrente."
+msgid "Should the popup's grid reflect the current monitor's aspect ratio or not."
+msgstr "La griglia del popup dovrebbe riflettere o meno le proporzioni dello schermo corrente."
 
-#. 3.8->settings-schema.json->useMonitorCenter->description
+#. 5.4->settings-schema.json->tiling-mode->description
+msgid "Tiling mode"
+msgstr ""
+
+#. 5.4->settings-schema.json->tiling-mode->options
+msgid "Off"
+msgstr ""
+
+#. 5.4->settings-schema.json->tiling-mode->options
+msgid "Rule-based tiling"
+msgstr ""
+
+#. 5.4->settings-schema.json->tiling-mode->options
+msgid "Traditional tiling (3 windows)"
+msgstr ""
+
+#. 5.4->settings-schema.json->tiling-mode->options
+msgid "Traditional tiling (unlimited)"
+msgstr ""
+
+#. 5.4->settings-schema.json->tiling-mode->options
+msgid "Scrollable tiling (like Niri)"
+msgstr ""
+
+#. 5.4->settings-schema.json->tiling-mode->tooltip
+msgid ""
+"Off: nothing is tiled automatically - only the manual \"Tile with gaps N\" hotkeys apply.\n"
+"\n"
+"Rule-based tiling: OhMyDebn's own tile-rules.json matches specific apps to specific spots.\n"
+"\n"
+"Traditional tiling (3 windows): every new window splits into a binary tree (full screen, then left/right, then upper-right/lower-right, alternating vertical/horizontal), capped at 3 windows - a 4th window discards the tree and starts over at full screen; independent per monitor and workspace; ignores tile-rules.json entirely.\n"
+"\n"
+"Traditional tiling (unlimited): the same binary-tree splitting but keeps going past 3 windows instead of restarting. Both traditional modes automatically rebalance when a window closes, so the remaining windows reclaim the freed space.\n"
+"\n"
+"Scrollable tiling (like Niri): every new window opens as its own full-height column to the right of the focused one, at the configured column width, and the screen is a viewport scrolling over the strip of columns - focusing a window scrolls its column into view, and columns scrolled out of view are minimized until focused again (window list, Alt-Tab, the column hotkeys on the Hotkeys tab - Super+comma/period by default - or the org.gTile.Control D-Bus methods FocusColumnLeft/FocusColumnRight and MoveColumnLeft/MoveColumnRight). A lone window fills the whole screen and collapses to a column when a second one opens - and expands again when it's alone. Ignores tile-rules.json entirely.\n"
+"\n"
+"All automatic modes are independent per monitor and workspace, and a window stays in the layout of the monitor and workspace it opened on - moving it elsewhere by hand doesn't re-tile it there. Cycle through the modes with Super+L / Super+Shift+L (see the Hotkeys tab); switching modes only affects windows opened afterwards."
+msgstr ""
+
+#. 5.4->settings-schema.json->scrollable-column-width->units
+msgid "%"
+msgstr ""
+
+#. 5.4->settings-schema.json->scrollable-column-width->description
+msgid "Scrollable tiling column width"
+msgstr ""
+
+#. 5.4->settings-schema.json->scrollable-column-width->tooltip
+msgid "Column width for Scrollable tiling, as a percentage of the usable screen width. At 50% two columns are visible at a time; at 33% three are. Only used when Automatic tiling is set to Scrollable tiling. A lone window always fills the whole screen regardless of this setting."
+msgstr ""
+
+#. 5.4->settings-schema.json->scroll-animation-duration->units
+msgid "ms"
+msgstr ""
+
+#. 5.4->settings-schema.json->scroll-animation-duration->description
+msgid "Tiling animation duration"
+msgstr ""
+
+#. 5.4->settings-schema.json->scroll-animation-duration->tooltip
+msgid "How long windows take to glide and resize into place when automatic tiling rearranges them - Scrollable tiling's scrolling as well as the Traditional modes' splits and rebalances - in milliseconds. 0 disables the animation. Automatically disabled while Cinnamon's system-wide desktop effects are turned off."
+msgstr ""
+
+#. 5.4->settings-schema.json->maximize-with-gaps->description
+msgid "Maximize with gaps"
+msgstr ""
+
+#. 5.4->settings-schema.json->maximize-with-gaps->tooltip
+msgid ""
+"When maximizing a window (titlebar maximize button, Super+PageUp, or double-clicking the titlebar), leave the existing window-gap margin instead of a true edge-to-edge maximize. Dragging a window to the top edge is not affected - that's a separate top-half tile, not a maximize.\n"
+"\n"
+"Independent of Automatic tiling - applies no matter which tiling mode is selected. Uses the same \"Window gaps in pixels\" size set above.\n"
+"\n"
+"Note: Cinnamon no longer considers a gap-maximized window \"maximized\" internally, so maximizing it again restores it to its original size and position instead of re-maximizing."
+msgstr ""
+
 #. 5.4->settings-schema.json->useMonitorCenter->description
 msgid "UI always centered to monitor"
 msgstr "Interfaccia utente sempre centrata sullo schermo"
 
-#. 3.8->settings-schema.json->useMonitorCenter->tooltip
 #. 5.4->settings-schema.json->useMonitorCenter->tooltip
-msgid ""
-"By default the grid UI shows up in the middle of the active window. With "
-"this, it always displays in the middle of the monitor."
-msgstr ""
-"Per impostazione predefinita, l'interfaccia utente della griglia viene "
-"visualizzata al centro della finestra attiva. Con questo, viene sempre "
-"visualizzato al centro dello schermo."
+msgid "By default the grid UI shows up in the middle of the active window. With this, it always displays in the middle of the monitor."
+msgstr "Per impostazione predefinita, l'interfaccia utente della griglia viene visualizzata al centro della finestra attiva. Con questo, viene sempre visualizzato al centro dello schermo."
 
-#. 3.8->settings-schema.json->showGridOnAllMonitors->description
 #. 5.4->settings-schema.json->showGridOnAllMonitors->description
-msgid "Show UI and all monitors at the same time"
+#, fuzzy
+msgid "Show UI on all monitors at the same time"
 msgstr "Mostra l'interfaccia utente e tutti gli schermi contemporaneamente"
 
-#. 3.8->settings-schema.json->grid1NameOverride->description
-#. 3.8->settings-schema.json->grid2NameOverride->description
-#. 3.8->settings-schema.json->grid3NameOverride->description
-#. 3.8->settings-schema.json->grid4NameOverride->description
+#. 5.4->settings-schema.json->columns->description
+#. 5.4->settings-schema.json->grid1x->description
+#. 5.4->settings-schema.json->grid2x->description
+#. 5.4->settings-schema.json->grid3x->description
+#. 5.4->settings-schema.json->grid4x->description
+msgid "Columns"
+msgstr "Colonne"
+
+#. 5.4->settings-schema.json->rows->description
+#. 5.4->settings-schema.json->grid1y->description
+#. 5.4->settings-schema.json->grid2y->description
+#. 5.4->settings-schema.json->grid3y->description
+#. 5.4->settings-schema.json->grid4y->description
+msgid "Rows"
+msgstr "Righe"
+
+#. 5.4->settings-schema.json->grid1NameOverride->description
 #. 5.4->settings-schema.json->grid2NameOverride->description
 #. 5.4->settings-schema.json->grid3NameOverride->description
 #. 5.4->settings-schema.json->grid4NameOverride->description
-msgid "Name Override"
-msgstr "Sostituzione del nome"
+msgid "Name Override on the UI"
+msgstr "Sostituzione del nome sull'interfaccia utente"
 
-#. 3.8->settings-schema.json->grid1x->tooltip
-#. 3.8->settings-schema.json->grid2x->tooltip
-#. 3.8->settings-schema.json->grid3x->tooltip
-#. 3.8->settings-schema.json->grid4x->tooltip
 #. 5.4->settings-schema.json->grid1x->tooltip
 #. 5.4->settings-schema.json->grid2x->tooltip
 #. 5.4->settings-schema.json->grid3x->tooltip
 #. 5.4->settings-schema.json->grid4x->tooltip
-msgid ""
-"Each row represents a column. Span is how much space a column should take up "
-"compared to the other columns. Default is 1."
-msgstr ""
-"Ogni riga rappresenta una colonna. Lo span è quanto spazio dovrebbe occupare "
-"una colonna rispetto alle altre colonne. Il valore predefinito è 1."
+msgid "Each row represents a column. Span is how much space a column should take up compared to the other columns. Default is 1."
+msgstr "Ogni riga rappresenta una colonna. Lo span è quanto spazio dovrebbe occupare una colonna rispetto alle altre colonne. Il valore predefinito è 1."
 
-#. 3.8->settings-schema.json->grid1x->columns->title
-#. 3.8->settings-schema.json->grid1y->columns->title
-#. 3.8->settings-schema.json->grid2x->columns->title
-#. 3.8->settings-schema.json->grid2y->columns->title
-#. 3.8->settings-schema.json->grid3x->columns->title
-#. 3.8->settings-schema.json->grid3y->columns->title
-#. 3.8->settings-schema.json->grid4x->columns->title
-#. 3.8->settings-schema.json->grid4y->columns->title
 #. 5.4->settings-schema.json->grid1x->columns->title
 #. 5.4->settings-schema.json->grid1y->columns->title
 #. 5.4->settings-schema.json->grid2x->columns->title
@@ -307,21 +331,31 @@ msgstr ""
 msgid "Span"
 msgstr "Span"
 
-#. 3.8->settings-schema.json->grid1y->tooltip
-#. 3.8->settings-schema.json->grid2y->tooltip
-#. 3.8->settings-schema.json->grid3y->tooltip
-#. 3.8->settings-schema.json->grid4y->tooltip
 #. 5.4->settings-schema.json->grid1y->tooltip
 #. 5.4->settings-schema.json->grid2y->tooltip
 #. 5.4->settings-schema.json->grid3y->tooltip
 #. 5.4->settings-schema.json->grid4y->tooltip
-msgid ""
-"Each row represents a row. Span is how much space a row should take up "
-"compared to the other columns. Default is 1."
-msgstr ""
-"Ogni riga rappresenta una riga. Lo span è quanto spazio dovrebbe occupare "
-"una riga rispetto alle altre colonne. Il valore predefinito è 1."
+#, fuzzy
+msgid "Each row represents a row. Span is how much space a row should take up compared to the other rows. Default is 1."
+msgstr "Ogni riga rappresenta una riga. Lo span è quanto spazio dovrebbe occupare una riga rispetto alle altre colonne. Il valore predefinito è 1."
 
-#. 5.4->settings-schema.json->grid1NameOverride->description
-msgid "Name Override on the UI"
-msgstr "Sostituzione del nome sull'interfaccia utente"
+#. 5.4->settings-schema.json->select-using-keyboard->description
+msgid "Show tile labels"
+msgstr ""
+
+#. 5.4->settings-schema.json->gap-size->units
+#, fuzzy
+msgid "px"
+msgstr "x"
+
+#. 5.4->settings-schema.json->gap-size->description
+msgid "Window gaps in pixels"
+msgstr ""
+
+#. metadata.json->name
+msgid "gTile"
+msgstr "gTile"
+
+#. metadata.json->description
+msgid "Tile your windows as you like."
+msgstr "Affianca le finestre come preferisci."

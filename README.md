@@ -38,6 +38,16 @@ This extension is actually called gTile@OhMyDebn but GitHub doesn't allow the @ 
 
 If you're using [OhMyDebn](https://github.com/dougburks/ohmydebn), then this extension is automatically installed for you.
 
+## Translations
+
+`po/gTile@OhMyDebn.pot` is generated from the current strings (settings-schema.json, metadata.json and `_()` calls in `5.4/`), and every `po/*.po` is merged against it, by:
+
+```sh
+python3 tools/update-pot.py
+```
+
+Re-run it after changing any user-facing string. gettext matches translations on the exact source text, so an edited string silently loses its translations in every language until the template is regenerated and a translator confirms the entry msgmerge marked fuzzy.
+
 ## Tests
 
 The pure-logic modules in `5.4/` and the settings schema have unit tests that run with plain `gjs`, no live Cinnamon session needed — `tests/run.sh` discovers every `tests/test-*.js` suite automatically:
