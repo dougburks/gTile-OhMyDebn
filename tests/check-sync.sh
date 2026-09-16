@@ -24,6 +24,7 @@ SYNCED_FILES=(
   screen-area.js
   gap-math.js
   tile-labels.js
+  grid-ui-math.js
 )
 
 FAIL=0

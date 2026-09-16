@@ -753,6 +753,82 @@ function tileLabelToIndex(letter) {
 }
 // END tile-labels.js
 
+// BEGIN grid-ui-math.js
+// The monitor whose .index is `monitorIndex`, else `fallback`. Meta's
+// window.get_monitor() returns -1 for a window that isn't on any monitor
+// (mid-unmanage, or during a monitor change), and layoutManager.monitors
+// is looked up by .index rather than array position on purpose: the two
+// usually agree, but nothing guarantees it. gTile.js used to index the
+// array directly (this.monitors[win.get_monitor()]) in one place and
+// .find() with a fallback in another; -1 through the former produced
+// `undefined` and a throw on the next property access.
+function monitorForIndex(monitors, monitorIndex, fallback) {
+    for (const monitor of monitors) {
+        if (monitor.index === monitorIndex) return monitor;
+    }
+    return fallback;
+}
+
+// Top-left [x, y] for a popup of gridWidth x gridHeight whose *centre*
+// should sit at (centerX, centerY), kept fully inside `monitor`. The
+// upstream code clamped the centre point as if it were the top-left
+// corner and only then subtracted half the size, so a window centred
+// near the left/top edge put the popup half off-screen while one near
+// the right/bottom edge was pushed a full popup-width too far in. Clamp
+// the actual corner instead. A popup larger than the monitor pins to
+// the monitor's origin (its left/top edge stays reachable).
+function clampGridTopLeft(centerX, centerY, gridWidth, gridHeight, monitor) {
+    let x = centerX - gridWidth / 2;
+    let y = centerY - gridHeight / 2;
+    const maxX = monitor.x + monitor.width - gridWidth;
+    const maxY = monitor.y + monitor.height - gridHeight;
+    if (x > maxX) x = maxX;
+    if (y > maxY) y = maxY;
+    if (x < monitor.x) x = monitor.x;
+    if (y < monitor.y) y = monitor.y;
+    return [Math.floor(x), Math.floor(y)];
+}
+
+// The Grid the App should act on. With showGridOnAllMonitors off there
+// is exactly one Grid and it follows the focused window from monitor to
+// monitor - so it must be selected as "the only grid", not looked up by
+// monitor: ShowUI moves that grid to the focused window's monitor
+// *before* App.currentMonitor is brought up to date, and looking it up
+// by the stale currentMonitor during that gap returned undefined and
+// threw (leaving the popup open with no key controls, and every later
+// focus change throwing the same way). With one grid per monitor, the
+// lookup by the current monitor's index is the right one.
+function selectCurrentGrid(grids, showGridOnAllMonitors, currentMonitorIndex) {
+    if (!showGridOnAllMonitors) return grids[0];
+    for (const grid of grids) {
+        if (grid.monitor.index === currentMonitorIndex) return grid;
+    }
+    return undefined;
+}
+
+// Whether a keyboard cursor at (colKey, rowKey) still fits a grid of
+// `cols` x `rows` cells; -1/-1 (no cursor yet) is always fine.
+function keyCursorFits(colKey, rowKey, cols, rows) {
+    return colKey < cols && rowKey < rows;
+}
+
+// The element the keyboard cursor points at in a freshly built 2-D
+// `elements` array (rows of columns), or null when there is no cursor
+// or it is out of range. Grid rebuilt its elements (switching grid
+// layout, a settings change) but kept `keyElement` pointing at the
+// destroyed element from the previous build, whose delegate no longer
+// had any listeners - so Space after a rebuild silently did nothing, or
+// threw on a smaller grid. Re-resolving through this after every
+// rebuild (and after every key press, as before) keeps the cursor on a
+// live element.
+function resolveKeyElement(elements, rowKey, colKey) {
+    if (rowKey < 0 || colKey < 0) return null;
+    const row = elements[rowKey];
+    if (!row) return null;
+    return row[colKey] || null;
+}
+// END grid-ui-math.js
+
 // Thin impure wrapper around computeUsableArea above - maps Cinnamon's
 // live Panel objects into the plain { position, size, hideable }
 // descriptors that pure function takes, then hands off the actual math
@@ -1358,9 +1434,15 @@ let Grid = class Grid {
             this.table.destroy_all_children();
             this.cols = this.app.config.nbCols;
             this.rows = this.app.config.nbRows;
-            if (this.cols.length <= this.colKey || this.rows.length <= this.rowKey)
+            if (!keyCursorFits(this.colKey, this.rowKey, this.cols.length, this.rows.length))
                 this.Reset();
             this.RebuildGridElements();
+            // Every element (and the delegate) was just recreated, so an
+            // in-range cursor must be re-pointed at the NEW element - see
+            // resolveKeyElement's comment for the stale-reference bug.
+            this.keyElement = resolveKeyElement(this.elements, this.rowKey, this.colKey);
+            if (this.keyElement)
+                this.keyElement._onHoverChanged();
         };
         this.RebuildGridElements = () => {
             var _a;
@@ -1494,7 +1576,7 @@ let Grid = class Grid {
                     (_h = (_g = this.app.config.gridSettingsButton) === null || _g === void 0 ? void 0 : _g[3]) === null || _h === void 0 ? void 0 : _h._onButtonPress();
                     break;
             }
-            this.keyElement = this.elements[this.rowKey] ? this.elements[this.rowKey][this.colKey] : null;
+            this.keyElement = resolveKeyElement(this.elements, this.rowKey, this.colKey);
             if (this.keyElement)
                 this.keyElement._onHoverChanged();
         };
@@ -1724,13 +1806,15 @@ class App {
         this.MoveToMonitor = async (current, newMonitor) => {
             if (current.index == newMonitor.index)
                 return;
-            if (!this.config.showGridOnAllMonitors)
-                this.CurrentGrid.ChangeCurrentMonitor(newMonitor);
+            if (!this.config.showGridOnAllMonitors) {
+                const grid = this.CurrentGrid;
+                if (grid)
+                    grid.ChangeCurrentMonitor(newMonitor);
+            }
             this.currentMonitor = newMonitor;
             this.MoveUIActor();
         };
         this.ShowUI = () => {
-            var _a;
             this.focusMetaWindow = getFocusApp();
             const window = this.focusMetaWindow;
             // No focused window (empty desktop) - nothing to tile, and
@@ -1751,9 +1835,12 @@ class App {
             this.area.visible = true;
             for (const grid of this.grids) {
                 if (!this.config.showGridOnAllMonitors)
-                    grid.ChangeCurrentMonitor((_a = this.monitors.find(x => x.index == window.get_monitor())) !== null && _a !== void 0 ? _a : app_Main.layoutManager.primaryMonitor);
+                    grid.ChangeCurrentMonitor(monitorForIndex(this.monitors, window.get_monitor(), app_Main.layoutManager.primaryMonitor));
                 const [pos_x, pos_y] = (!this.config.useMonitorCenter && grid.monitor.index == this.currentMonitor.index) ? this.platform.get_window_center(window) : GetMonitorCenter(grid.monitor);
-                grid.Show(Math.floor(pos_x - grid.actor.width / 2), Math.floor(pos_y - grid.actor.height / 2));
+                // Clamped like MoveUIActor below, so the show tween starts
+                // on-screen rather than gliding in from off the edge.
+                const [show_x, show_y] = clampGridTopLeft(pos_x, pos_y, grid.actor.width, grid.actor.height, grid.monitor);
+                grid.Show(show_x, show_y);
             }
             // Once for the whole UI, not once per grid - the per-grid
             // loops inside it already cover every monitor's grid.
@@ -1853,16 +1940,14 @@ class App {
                 let isGridMonitor = window.get_monitor() === grid.monitor.index;
                 if (isGridMonitor) {
                     [pos_x, pos_y] = (!this.config.useMonitorCenter) ? this.platform.get_window_center(window) : GetMonitorCenter(monitor);
-                    pos_x = pos_x < monitor.x ? monitor.x : pos_x;
-                    pos_x = pos_x + gridWidth > monitor.width + monitor.x ? monitor.x + monitor.width - gridWidth : pos_x;
-                    pos_y = pos_y < monitor.y ? monitor.y : pos_y;
-                    pos_y = pos_y + gridHeight > monitor.height + monitor.y ? monitor.y + monitor.height - gridHeight : pos_y;
                 }
                 else {
                     [pos_x, pos_y] = GetMonitorCenter(monitor);
                 }
-                pos_x = Math.floor(pos_x - gridWidth / 2);
-                pos_y = Math.floor(pos_y - gridHeight / 2);
+                // Keep the whole popup on its monitor - see
+                // clampGridTopLeft's comment for the edge-clamping bug
+                // the inline version of this used to have.
+                [pos_x, pos_y] = clampGridTopLeft(pos_x, pos_y, gridWidth, gridHeight, monitor);
                 grid.AdjustTableSize(newTableWidth, newTableHeight);
                 app_Tweener.addTween(grid.actor, {
                     time: this.config.AnimationTime,
@@ -1887,9 +1972,17 @@ class App {
             }
             this.ResetFocusedWindow();
             this.focusMetaWindow = window;
-            if (!this.config.showGridOnAllMonitors)
-                this.CurrentGrid.ChangeCurrentMonitor(this.monitors[this.focusMetaWindow.get_monitor()]);
-            this.currentMonitor = this.monitors[this.focusMetaWindow.get_monitor()];
+            // The single grid follows the focused window; CurrentGrid is
+            // safe to consult here whatever state currentMonitor is in
+            // (see selectCurrentGrid's comment), and monitorForIndex
+            // never yields undefined for a -1 from get_monitor().
+            const windowMonitor = monitorForIndex(this.monitors, this.focusMetaWindow.get_monitor(), app_Main.layoutManager.primaryMonitor);
+            if (!this.config.showGridOnAllMonitors) {
+                const grid = this.CurrentGrid;
+                if (grid)
+                    grid.ChangeCurrentMonitor(windowMonitor);
+            }
+            this.currentMonitor = windowMonitor;
             this.focusMetaWindowPrivateConnections.push(...this.platform.subscribe_to_focused_window_changes(this.focusMetaWindow, this.MoveUIActor));
             let app = this.tracker.get_window_app(this.focusMetaWindow);
             let title = this.focusMetaWindow.get_title();
@@ -1994,7 +2087,7 @@ class App {
         return this.focusMetaWindow;
     }
     get CurrentGrid() {
-        const grid = this.grids.find(x => x.monitor.index == this.currentMonitor.index);
+        const grid = selectCurrentGrid(this.grids, this.config.showGridOnAllMonitors, this.currentMonitor.index);
         return grid;
     }
     get Grids() {
