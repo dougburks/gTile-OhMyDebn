@@ -176,6 +176,70 @@ assertEq('identity: that same captured reference reflects A\'s post-split region
 assertEq('identity: that same captured reference has a live (non-null) parent, so it does not look orphaned',
     capturedLeafA.parent === idA.root, true);
 
+// --- treeRemoveDetached: closing windows from a tree the capped mode discarded ---
+// Capped mode, the reported repro: open 1/2/3 (full tree), open 4 (cap
+// hit - tree discarded, 4 starts fresh over the top), open 5/6, then
+// close 6, 5, 4. Windows 1/2/3 are visible again but the live state is
+// empty and their leaves chain up to the discarded root. Closing 3 (the
+// bottom-right one) must still expand 2 into its space, and closing 2
+// after that must expand 1 to full screen - via the discarded tree's own
+// links, with the live state left untouched.
+
+let cap = treeInsert(EMPTY, 'W1', 3);
+const leafW1 = cap.insertionLeaf;
+cap = treeInsert(cap, 'W2', 3);
+const leafW2 = cap.insertionLeaf;
+cap = treeInsert(cap, 'W3', 3);
+const leafW3 = cap.insertionLeaf;
+const discardedRoot = cap.root;
+cap = treeInsert(cap, 'W4', 3);
+const leafW4 = cap.insertionLeaf;
+cap = treeInsert(cap, 'W5', 3);
+const leafW5 = cap.insertionLeaf;
+cap = treeInsert(cap, 'W6', 3);
+const leafW6 = cap.insertionLeaf;
+assertEq('detached setup: window 4 discarded the 1/2/3 tree (its root is no longer the live root)',
+    cap.root !== discardedRoot, true);
+assertEq('detached setup: window 3\'s leaf still chains up to the discarded root, not the live one',
+    [treeRootOf(leafW3) === discardedRoot, treeRootOf(leafW3) === cap.root], [true, false]);
+
+for (const leaf of [leafW6, leafW5, leafW4]) {
+    cap = treeRemove(cap, leaf);
+}
+assertEq('detached setup: closing 6, 5, 4 empties the live tree', cap.root, null);
+
+const liveBefore = JSON.stringify(cap);
+let detached = treeRemoveDetached(leafW3);
+assertEq('detached: closing window 3 expands window 2 into the whole right half (the reported bug)',
+    detached.moves, [{ window: 'W2', region: region(0.5, 0, 0.5, 1) }]);
+assertEq('detached: window 1 is not moved by closing 3', detached.moves.length, 1);
+assertEq('detached: the discarded tree collapsed to 1 | 2, and 2\'s leaf reflects its new region',
+    [stripParents(detached.root), leafW2.region],
+    [{ type: 'split', vertical: true, region: region(0, 0, 1, 1),
+        first: { type: 'leaf', window: 'W1', region: region(0, 0, 0.5, 1) },
+        second: { type: 'leaf', window: 'W2', region: region(0.5, 0, 0.5, 1) } },
+     region(0.5, 0, 0.5, 1)]);
+assertEq('detached: the live state is untouched (caller must not write it back)', JSON.stringify(cap), liveBefore);
+
+detached = treeRemoveDetached(leafW2);
+assertEq('detached: then closing window 2 expands window 1 to full screen',
+    detached.moves, [{ window: 'W1', region: region(0, 0, 1, 1) }]);
+assertEq('detached: window 1 is now the discarded tree\'s whole root', detached.root === leafW1, true);
+assertEq('detached: closing the last window of a discarded tree yields no moves and no tree',
+    treeRemoveDetached(leafW1), { root: null, moves: [] });
+
+// Same, but closing window 2 while 4/5/6 are still open: 1 should expand
+// underneath them right away (covered, but correct the moment they go).
+let cap2 = treeInsert(EMPTY, 'W1', 3);
+cap2 = treeInsert(cap2, 'W2', 3);
+const leafW2b = cap2.insertionLeaf;
+cap2 = treeInsert(cap2, 'W3', 3);
+cap2 = treeInsert(cap2, 'W4', 3);
+const liveAfter4 = cap2.root;
+assertEq('detached (covered): closing window 2 under a live 4-tree expands 3 into the right half',
+    treeRemoveDetached(leafW2b).moves, [{ window: 'W3', region: region(0.5, 0, 0.5, 1) }]);
+assertEq('detached (covered): the live 4-tree is unaffected', cap2.root === liveAfter4 && cap2.root.window === 'W4', true);
+
 // --- treeRemove: removing the whole tree (last window) ---
 let onlyA = treeInsert(EMPTY, 'A', null);
 assertEq('remove last window: tree becomes empty',

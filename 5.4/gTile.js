@@ -469,6 +469,33 @@ function treeRemove(state, leaf) {
 
     return { root: newRoot, insertionLeaf: insertionLeaf, leafCount: state.leafCount - 1, moves: moves };
 }
+
+function treeRootOf(node) {
+    let root = node;
+    while (root.parent) {
+        root = root.parent;
+    }
+    return root;
+}
+
+// Removes `leaf` from whichever tree it actually belongs to, found by
+// walking up its own parent chain - for windows whose tree the capped
+// mode has since discarded and replaced (see treeInsert's maxLeaves).
+// Those windows stay on screen underneath the new tree, still wired to
+// their old one, and once the new tree's windows are closed they're
+// visible again - so closing one of them must still rebalance its old
+// siblings (close the 3rd of 1/2/3 after 4/5/6 have come and gone: 2
+// has to expand into 3's space, exactly as it would have before 4 ever
+// appeared). Without this, gTile.js's close hook saw "not the live
+// tree" and did nothing, leaving 2 stuck in its half. The discarded
+// tree's parent/sibling links are all still intact, so plain treeRemove
+// does the work; this just supplies that tree's own root instead of the
+// live state's. The caller must NOT write the result back to its live
+// state - the discarded tree stays discarded, only its windows move.
+function treeRemoveDetached(leaf) {
+    const removal = treeRemove({ root: treeRootOf(leaf), insertionLeaf: null, leafCount: 0 }, leaf);
+    return { root: removal.root, moves: removal.moves };
+}
 // END traditional-tiling.js
 
 // Kept byte-for-byte in sync with the standalone 5.4/scrollable-tiling.js
@@ -3242,25 +3269,31 @@ const enable = () => {
                         // reloaded since, so leave the windows alone.
                         if (thisGeneration !== enableGeneration) return imports.gi.GLib.SOURCE_REMOVE;
                         const current = stateMap.get(key);
-                        if (!current || !current.root) return imports.gi.GLib.SOURCE_REMOVE;
-                        // If the capped mode discarded and restarted the
-                        // tree since this window was inserted, ownLeaf
-                        // belongs to an abandoned tree, not the current
-                        // live one - this window was already orphaned/
-                        // covered (same as today's shipped "window 4
-                        // covers whatever's there" behavior), so leave the
-                        // current tree alone rather than splicing into
-                        // the wrong structure.
-                        let ownRoot = ownLeaf;
-                        while (ownRoot.parent) {
-                            ownRoot = ownRoot.parent;
+                        if (current && current.root && treeRootOf(ownLeaf) === current.root) {
+                            const removal = treeRemove(current, ownLeaf);
+                            stateMap.set(key, { root: removal.root, insertionLeaf: removal.insertionLeaf, leafCount: removal.leafCount });
+                            for (const move of removal.moves) {
+                                applyMove(move, 'tree-tiling rebalance move');
+                            }
+                            return imports.gi.GLib.SOURCE_REMOVE;
                         }
-                        if (ownRoot !== current.root) return imports.gi.GLib.SOURCE_REMOVE;
-
-                        const removal = treeRemove(current, ownLeaf);
-                        stateMap.set(key, { root: removal.root, insertionLeaf: removal.insertionLeaf, leafCount: removal.leafCount });
-                        for (const move of removal.moves) {
-                            applyMove(move, 'tree-tiling rebalance move');
+                        // ownLeaf isn't in the live tree: the capped mode
+                        // discarded and restarted the tree since this
+                        // window was inserted (see treeInsert's
+                        // maxLeaves), or the live tree is already empty
+                        // again. This window's old siblings are still on
+                        // screen - covered while the newer tree's windows
+                        // are up, fully visible once those are closed -
+                        // and the old tree's links are intact, so
+                        // rebalance them among themselves without
+                        // touching the live state (which stays as it is;
+                        // a new window after the cap still starts fresh).
+                        // Previously this case just returned, which left
+                        // e.g. window 2 of 1/2/3 stuck in its half after
+                        // closing 3 once 4/5/6 had come and gone.
+                        const detached = treeRemoveDetached(ownLeaf);
+                        for (const move of detached.moves) {
+                            applyMove(move, 'tree-tiling rebalance move (discarded tree)');
                         }
                         return imports.gi.GLib.SOURCE_REMOVE;
                     });
