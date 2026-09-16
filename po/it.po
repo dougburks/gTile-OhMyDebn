@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "Report-Msgid-Bugs-To: https://github.com/dougburks/gTile-OhMyDebn/issues\n"
-"POT-Creation-Date: 2026-09-16 18:19+0000\n"
+"POT-Creation-Date: 2026-09-16 18:24+0000\n"
 "PO-Revision-Date: 2023-03-31 10:43+0200\n"
 "Last-Translator: Dragone2 <dragone2@risposteinformatiche.it>\n"
 "Language-Team: \n"
@@ -186,7 +186,7 @@ msgid "Scrollable tiling only: swap the focused window's column with its right n
 msgstr ""
 
 #. 5.4->settings-schema.json->animation->tooltip
-msgid "Animate the gTile overlay popup (show/hide and grid transitions). Automatic tiling's window animation has its own \"Tiling animation duration\" setting."
+msgid "Animate the gTile overlay popup (show/hide and grid transitions). Automatic tiling's window animation is controlled separately by \"Tiling animation duration\" below."
 msgstr ""
 
 #. 5.4->settings-schema.json->autoclose->description
@@ -198,7 +198,8 @@ msgid "Use monitor aspect ratio"
 msgstr "Usa le proporzioni dello schermo"
 
 #. 5.4->settings-schema.json->aspect-ratio->tooltip
-msgid "Should the popup's grid reflect the current monitor's aspect ratio or not."
+#, fuzzy
+msgid "Whether the popup's grid reflects the current monitor's aspect ratio."
 msgstr "La griglia del popup dovrebbe riflettere o meno le proporzioni dello schermo corrente."
 
 #. 5.4->settings-schema.json->tiling-mode->description
@@ -227,7 +228,7 @@ msgstr ""
 
 #. 5.4->settings-schema.json->tiling-mode->tooltip
 msgid ""
-"Off: nothing is tiled automatically - only the manual \"Tile with gaps N\" hotkeys apply.\n"
+"Off: nothing is tiled automatically. Windows are tiled only when you use the gTile popup, its hotkeys, or the org.gTile.Control D-Bus interface (which is how OhMyDebn's \"Tile with gaps\" keybindings work).\n"
 "\n"
 "Rule-based tiling: OhMyDebn's own tile-rules.json matches specific apps to specific spots.\n"
 "\n"
@@ -249,7 +250,7 @@ msgid "Scrollable tiling column width"
 msgstr ""
 
 #. 5.4->settings-schema.json->scrollable-column-width->tooltip
-msgid "Column width for Scrollable tiling, as a percentage of the usable screen width. At 50% two columns are visible at a time; at 33% three are. Only used when Automatic tiling is set to Scrollable tiling. A lone window always fills the whole screen regardless of this setting."
+msgid "Column width for Scrollable tiling, as a percentage of the usable screen width. At 50% two columns are visible at a time, at 25% four. Widths that don't divide the screen evenly (30%, 40%) leave the remainder empty at the right edge. Only used when Tiling mode is Scrollable tiling. A lone window always fills the whole screen regardless of this setting."
 msgstr ""
 
 #. 5.4->settings-schema.json->scroll-animation-duration->units
@@ -270,15 +271,16 @@ msgstr ""
 
 #. 5.4->settings-schema.json->maximize-with-gaps->tooltip
 msgid ""
-"When maximizing a window (titlebar maximize button, Super+PageUp, or double-clicking the titlebar), leave the existing window-gap margin instead of a true edge-to-edge maximize. Dragging a window to the top edge is not affected - that's a separate top-half tile, not a maximize.\n"
+"When maximizing a window (titlebar maximize button, Cinnamon's maximize keybinding, or double-clicking the titlebar), leave the existing window-gap margin instead of a true edge-to-edge maximize. Dragging a window to the top edge is not affected - that's a separate top-half tile, not a maximize.\n"
 "\n"
-"Independent of Automatic tiling - applies no matter which tiling mode is selected. Uses the same \"Window gaps in pixels\" size set above.\n"
+"Independent of the Tiling mode setting - applies no matter which mode is selected. Uses the same \"Window gaps in pixels\" size set above.\n"
 "\n"
 "Note: Cinnamon no longer considers a gap-maximized window \"maximized\" internally, so maximizing it again restores it to its original size and position instead of re-maximizing."
 msgstr ""
 
 #. 5.4->settings-schema.json->useMonitorCenter->description
-msgid "UI always centered to monitor"
+#, fuzzy
+msgid "UI always centered on monitor"
 msgstr "Interfaccia utente sempre centrata sullo schermo"
 
 #. 5.4->settings-schema.json->useMonitorCenter->tooltip
@@ -353,9 +355,9 @@ msgid "Window gaps in pixels"
 msgstr ""
 
 #. metadata.json->name
-msgid "gTile"
-msgstr "gTile"
+msgid "gTile (OhMyDebn)"
+msgstr ""
 
 #. metadata.json->description
-msgid "Tile your windows as you like."
-msgstr "Affianca le finestre come preferisci."
+msgid "Window tiling with gaps, automatic tiling modes (rule-based, traditional, scrollable), and a D-Bus control interface. OhMyDebn's fork of gTile."
+msgstr ""

@@ -198,7 +198,7 @@
       "type": "checkbox",
       "default": true,
       "description": "Popup animation",
-      "tooltip": "Animate the gTile overlay popup (show/hide and grid transitions). Automatic tiling's window animation has its own \"Tiling animation duration\" setting."
+      "tooltip": "Animate the gTile overlay popup (show/hide and grid transitions). Automatic tiling's window animation is controlled separately by \"Tiling animation duration\" below."
    },
    "autoclose": {
       "type": "checkbox",
@@ -209,7 +209,7 @@
       "type": "checkbox",
       "default": true,
       "description": "Use monitor aspect ratio",
-      "tooltip": "Should the popup's grid reflect the current monitor's aspect ratio or not."
+      "tooltip": "Whether the popup's grid reflects the current monitor's aspect ratio."
    },
    "tiling-mode": {
       "type": "combobox",
@@ -222,17 +222,17 @@
          "Traditional tiling (unlimited)": "traditional-full",
          "Scrollable tiling (like Niri)": "scrollable"
       },
-      "tooltip": "Off: nothing is tiled automatically - only the manual \"Tile with gaps N\" hotkeys apply.\n\nRule-based tiling: OhMyDebn's own tile-rules.json matches specific apps to specific spots.\n\nTraditional tiling (3 windows): every new window splits into a binary tree (full screen, then left/right, then upper-right/lower-right, alternating vertical/horizontal), capped at 3 windows - a 4th window discards the tree and starts over at full screen; independent per monitor and workspace; ignores tile-rules.json entirely.\n\nTraditional tiling (unlimited): the same binary-tree splitting but keeps going past 3 windows instead of restarting. Both traditional modes automatically rebalance when a window closes, so the remaining windows reclaim the freed space.\n\nScrollable tiling (like Niri): every new window opens as its own full-height column to the right of the focused one, at the configured column width, and the screen is a viewport scrolling over the strip of columns - focusing a window scrolls its column into view, and columns scrolled out of view are minimized until focused again (window list, Alt-Tab, the column hotkeys on the Hotkeys tab - Super+comma/period by default - or the org.gTile.Control D-Bus methods FocusColumnLeft/FocusColumnRight and MoveColumnLeft/MoveColumnRight). A lone window fills the whole screen and collapses to a column when a second one opens - and expands again when it's alone. Ignores tile-rules.json entirely.\n\nAll automatic modes are independent per monitor and workspace, and a window stays in the layout of the monitor and workspace it opened on - moving it elsewhere by hand doesn't re-tile it there. Cycle through the modes with Super+L / Super+Shift+L (see the Hotkeys tab); switching modes only affects windows opened afterwards."
+      "tooltip": "Off: nothing is tiled automatically. Windows are tiled only when you use the gTile popup, its hotkeys, or the org.gTile.Control D-Bus interface (which is how OhMyDebn's \"Tile with gaps\" keybindings work).\n\nRule-based tiling: OhMyDebn's own tile-rules.json matches specific apps to specific spots.\n\nTraditional tiling (3 windows): every new window splits into a binary tree (full screen, then left/right, then upper-right/lower-right, alternating vertical/horizontal), capped at 3 windows - a 4th window discards the tree and starts over at full screen; independent per monitor and workspace; ignores tile-rules.json entirely.\n\nTraditional tiling (unlimited): the same binary-tree splitting but keeps going past 3 windows instead of restarting. Both traditional modes automatically rebalance when a window closes, so the remaining windows reclaim the freed space.\n\nScrollable tiling (like Niri): every new window opens as its own full-height column to the right of the focused one, at the configured column width, and the screen is a viewport scrolling over the strip of columns - focusing a window scrolls its column into view, and columns scrolled out of view are minimized until focused again (window list, Alt-Tab, the column hotkeys on the Hotkeys tab - Super+comma/period by default - or the org.gTile.Control D-Bus methods FocusColumnLeft/FocusColumnRight and MoveColumnLeft/MoveColumnRight). A lone window fills the whole screen and collapses to a column when a second one opens - and expands again when it's alone. Ignores tile-rules.json entirely.\n\nAll automatic modes are independent per monitor and workspace, and a window stays in the layout of the monitor and workspace it opened on - moving it elsewhere by hand doesn't re-tile it there. Cycle through the modes with Super+L / Super+Shift+L (see the Hotkeys tab); switching modes only affects windows opened afterwards."
    },
    "scrollable-column-width": {
       "type": "spinbutton",
       "default": 50,
       "min": 20,
-      "max": 80,
+      "max": 50,
       "units": "%",
       "step": 5,
       "description": "Scrollable tiling column width",
-      "tooltip": "Column width for Scrollable tiling, as a percentage of the usable screen width. At 50% two columns are visible at a time; at 33% three are. Only used when Automatic tiling is set to Scrollable tiling. A lone window always fills the whole screen regardless of this setting."
+      "tooltip": "Column width for Scrollable tiling, as a percentage of the usable screen width. At 50% two columns are visible at a time, at 25% four. Widths that don't divide the screen evenly (30%, 40%) leave the remainder empty at the right edge. Only used when Tiling mode is Scrollable tiling. A lone window always fills the whole screen regardless of this setting."
    },
    "scroll-animation-duration": {
       "type": "spinbutton",
@@ -248,12 +248,12 @@
       "type": "checkbox",
       "default": false,
       "description": "Maximize with gaps",
-      "tooltip": "When maximizing a window (titlebar maximize button, Super+PageUp, or double-clicking the titlebar), leave the existing window-gap margin instead of a true edge-to-edge maximize. Dragging a window to the top edge is not affected - that's a separate top-half tile, not a maximize.\n\nIndependent of Automatic tiling - applies no matter which tiling mode is selected. Uses the same \"Window gaps in pixels\" size set above.\n\nNote: Cinnamon no longer considers a gap-maximized window \"maximized\" internally, so maximizing it again restores it to its original size and position instead of re-maximizing."
+      "tooltip": "When maximizing a window (titlebar maximize button, Cinnamon's maximize keybinding, or double-clicking the titlebar), leave the existing window-gap margin instead of a true edge-to-edge maximize. Dragging a window to the top edge is not affected - that's a separate top-half tile, not a maximize.\n\nIndependent of the Tiling mode setting - applies no matter which mode is selected. Uses the same \"Window gaps in pixels\" size set above.\n\nNote: Cinnamon no longer considers a gap-maximized window \"maximized\" internally, so maximizing it again restores it to its original size and position instead of re-maximizing."
    },
    "useMonitorCenter": {
       "type": "checkbox",
       "default": false,
-      "description": "UI always centered to monitor",
+      "description": "UI always centered on monitor",
       "tooltip": "By default the grid UI shows up in the middle of the active window. With this, it always displays in the middle of the monitor."
    },
    "showGridOnAllMonitors": {

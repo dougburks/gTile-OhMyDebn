@@ -11,7 +11,7 @@ This is a fork of the Cinnamon gTile window tiling extension for [OhMyDebn](http
 - **Tiling animation**: window rearrangements from automatic tiling (scrollable scrolling, traditional splits and rebalances) glide into place, Hyprland-style; the duration is configurable in settings (0 disables it, and Cinnamon's global desktop-effects switch is respected)
 - **Mode cycling**: `Super+L` cycles the tiling mode (Off → Rule-based → Traditional ×2 → Scrollable and around), `Super+Shift+L` cycles backward, with a volume-style on-screen display announcing the new mode — inspired by Omarchy's layout toggle; both keys rebindable on the Hotkeys tab. Switching modes affects windows opened afterwards; existing windows stay where they are. Note: stock Cinnamon binds `Super+L` to Looking Glass by default — OhMyDebn moves Looking Glass to `Super+Alt+L`; on vanilla Cinnamon, rebind one side or the other (either in this extension's Hotkeys tab or in Cinnamon's `looking-glass-keybinding`)
 - **Settings hotkey**: `Super+Shift+G` opens the extension's settings window on the Behavior tab (rebindable, like all of the extension's hotkeys)
-- **Maximize with gaps**: maximizing a window (titlebar button, keybinding, or double-click) leaves the configured gap instead of going edge-to-edge; maximizing again restores the original size and position
+- **Maximize with gaps** (off by default, on the Behavior tab): maximizing a window (titlebar button, keybinding, or double-click) leaves the configured gap instead of going edge-to-edge; maximizing again restores the original size and position
 - **Tile labels**: with "Show tile labels" enabled, each tile in the grid UI shows a letter — press two letters to tile the focused window to the rectangle spanning those two tiles
 - a D-Bus control interface, so hotkeys or scripts can tile the focused window without showing the overlay:
 
@@ -24,7 +24,7 @@ This is a fork of the Cinnamon gTile window tiling extension for [OhMyDebn](http
   #   ... TileFocusedWindow 2 1 0 0 1 1
   ```
 
-  With Scrollable tiling active, the same interface also offers `FocusColumnLeft`, `FocusColumnRight`, `MoveColumnLeft`, and `MoveColumnRight` (no arguments) for scripted column navigation — the same actions the built-in column hotkeys drive:
+  The same interface also offers `FocusColumnLeft`, `FocusColumnRight`, `MoveColumnLeft`, and `MoveColumnRight` (no arguments) for scripted column navigation — the same actions the built-in column hotkeys drive. They are always present but return a D-Bus error unless Scrollable tiling is the active mode:
 
   ```sh
   gdbus call --session --dest org.gTile.Control \
@@ -34,9 +34,15 @@ This is a fork of the Cinnamon gTile window tiling extension for [OhMyDebn](http
 
   `CycleTilingMode <direction>` steps the tiling mode forward (positive) or backward (negative) through the same cycle as the `Super+L`/`Super+Shift+L` hotkeys, on-screen display included.
 
-This extension is actually called gTile@OhMyDebn but GitHub doesn't allow the @ symbol. So after cloning, the directory needs to be renamed from gTile-OhMyDebn to gTile@OhMyDebn.
+## Installation
 
-If you're using [OhMyDebn](https://github.com/dougburks/ohmydebn), then this extension is automatically installed for you.
+If you're using [OhMyDebn](https://github.com/dougburks/ohmydebn), this extension is installed and enabled for you.
+
+To install it by hand (Cinnamon 5.4 or newer), clone it into your user extensions directory under the extension's real name — it's called `gTile@OhMyDebn`, but GitHub doesn't allow `@` in repository names — then enable it in System Settings → Extensions (or restart Cinnamon first if it doesn't show up):
+
+```sh
+git clone https://github.com/dougburks/gTile-OhMyDebn ~/.local/share/cinnamon/extensions/gTile@OhMyDebn
+```
 
 ## Translations
 
@@ -50,8 +56,12 @@ Re-run it after changing any user-facing string. gettext matches translations on
 
 ## Tests
 
-The pure-logic modules in `5.4/` and the settings schema have unit tests that run with plain `gjs`, no live Cinnamon session needed — `tests/run.sh` discovers every `tests/test-*.js` suite automatically:
+The pure-logic modules in `5.4/` and the settings schema have unit tests that run with plain `gjs` (package `gjs` on Debian), no live Cinnamon session needed — `tests/run.sh` discovers every `tests/test-*.js` suite automatically:
 
 ```sh
 tests/run.sh
 ```
+
+## License
+
+GPL-3.0, the same license as the upstream [gTile](https://github.com/shuairan/gTile) extension this is forked from — see [LICENSE](LICENSE).
