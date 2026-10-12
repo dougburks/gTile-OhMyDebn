@@ -113,6 +113,19 @@ assertEq('key element: a rebuilt (new) elements array resolves to the NEW cell, 
     resolveKeyElement([['new00', 'new01'], ['new10', 'new11']], 1, 1), 'new11');
 assertEq('key element: empty elements resolves to null', resolveKeyElement([], 0, 0), null);
 
+// --- HiDPI: popup sizes set from JavaScript are physical pixels ---
+assertEq('popup metrics at 1x: the original 1x layout',
+    gridPopupMetrics(1), { tableWidth: 220, tableHeight: 200, panelBorderOffset: 40, borderWidth: 2, iconSize: 24 });
+assertEq('popup metrics at 2x: everything doubled, matching the stylesheet St doubles (it used to stay at 1x)',
+    gridPopupMetrics(2), { tableWidth: 440, tableHeight: 400, panelBorderOffset: 80, borderWidth: 4, iconSize: 48 });
+assertEq('popup metrics: panel = table + border offset scales together at 2x',
+    gridPopupMetrics(2).tableWidth + gridPopupMetrics(2).panelBorderOffset, 2 * (220 + 40));
+assertEq('table size without aspect ratio: 220x200 at 1x', gridTableSize(false, { widthIsLonger: true, ratio: 1.5 }, 1), [220, 200]);
+assertEq('table size without aspect ratio: 440x400 at 2x', gridTableSize(false, { widthIsLonger: true, ratio: 1.5 }, 2), [440, 400]);
+assertEq('table size following a 3:2 landscape monitor at 1x', gridTableSize(true, { widthIsLonger: true, ratio: 1.5 }, 1), [300, 200]);
+assertEq('table size following a 3:2 landscape monitor at 2x', gridTableSize(true, { widthIsLonger: true, ratio: 1.5 }, 2), [600, 400]);
+assertEq('table size following a portrait monitor at 2x', gridTableSize(true, { widthIsLonger: false, ratio: 1.5 }, 2), [400, 600]);
+
 print('');
 print(total + ' assertion(s), ' + failures + ' failure(s)');
 imports.system.exit(failures === 0 ? 0 : 1);

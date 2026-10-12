@@ -104,6 +104,22 @@ assertEq('a non-numeric value falls back to the default of 10',
 assertEq('Infinity falls back to the default rather than an infinite gap',
     normalizeGapSize(Infinity), 10);
 
+// --- HiDPI: the gap setting is logical pixels, window geometry physical ---
+assertEq('UI scale: 2 (a 200% HiDPI screen) is used as-is', normalizeUiScale(2), 2);
+assertEq('UI scale: a fractional scale is used as-is', normalizeUiScale(1.5), 1.5);
+assertEq('UI scale: missing (undefined) falls back to 1', normalizeUiScale(undefined), 1);
+assertEq('UI scale: 0 falls back to 1 rather than collapsing every size', normalizeUiScale(0), 1);
+assertEq('UI scale: a negative or non-numeric scale falls back to 1',
+    [normalizeUiScale(-2), normalizeUiScale('abc'), normalizeUiScale(Infinity)], [1, 1, 1]);
+assertEq('physical gap: at 1x the gap is unchanged', physicalGapSize(10, 1), 10);
+assertEq('physical gap: at 2x a 10px gap is 20 physical px (it used to stay 10, half as wide on screen)',
+    physicalGapSize(10, 2), 20);
+assertEq('physical gap: a gap of 0 stays 0 at any scale', physicalGapSize(0, 2), 0);
+assertEq('physical gap: fractional results round to whole pixels', physicalGapSize(5, 1.5), 8);
+assertEq('physical gap: no scale available behaves like 1x', physicalGapSize(10, undefined), 10);
+assertEq('a full-area tile at 2x: 20px from every edge of the usable area',
+    computeGappedRect(0, 40, 1920, 1040, ...U, physicalGapSize(10, 2)), [20, 60, 1880, 1000]);
+
 print('');
 print(total + ' assertion(s), ' + failures + ' failure(s)');
 imports.system.exit(failures === 0 ? 0 : 1);

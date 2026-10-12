@@ -90,3 +90,32 @@ function resolveKeyElement(elements, rowKey, colKey) {
     if (!row) return null;
     return row[colKey] || null;
 }
+
+// The grid popup's sizes that are set from JavaScript, in physical
+// pixels at a UI scale (pass normalizeUiScale(global.ui_scale), from
+// gap-math.js). The popup's stylesheet (margins, padding, fonts, the
+// grid-size buttons) is scaled by St, but these were fixed at their 1x
+// values, so on a 2x screen the panel came out half as wide as its own
+// contents and the title bar and buttons spilled out of it. Values are
+// the 1x layout's: a 220x200 table, 40px of panel around it (the
+// table's stylesheet margins), 2px cell borders and a 24px app icon.
+function gridPopupMetrics(scale) {
+    return {
+        tableWidth: 220 * scale,
+        tableHeight: 200 * scale,
+        panelBorderOffset: 40 * scale,
+        borderWidth: 2 * scale,
+        iconSize: 24 * scale,
+    };
+}
+
+// The grid table's [width, height] in physical pixels: 220x200 by
+// default, or 200 on the monitor's shorter side and 200 * ratio on its
+// longer side when the popup follows the monitor's aspect ratio.
+function gridTableSize(useAspectRatio, aspect, scale) {
+    if (!useAspectRatio)
+        return [220 * scale, 200 * scale];
+    return aspect.widthIsLonger
+        ? [200 * aspect.ratio * scale, 200 * scale]
+        : [200 * scale, 200 * aspect.ratio * scale];
+}

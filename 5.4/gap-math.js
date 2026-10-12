@@ -59,3 +59,22 @@ function normalizeGapSize(value) {
     const n = Number(value);
     return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 10;
 }
+
+// The desktop's UI scale as a usable multiplier: Cinnamon's
+// global.ui_scale (2 on a HiDPI screen set to 200%), or 1 when it's
+// missing or nonsense. Pixel sizes this extension sets itself (window
+// geometry, sizes set from JavaScript) are physical pixels, which St
+// does NOT scale - only stylesheet sizes are scaled for it.
+function normalizeUiScale(scale) {
+    const n = Number(scale);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+// The gap in physical pixels at a UI scale. The gap-size setting is in
+// logical pixels, like every other size the user sees, but
+// move_resize_frame takes physical ones - passing it through unscaled
+// made gaps half as wide on a 2x screen. Rounded so window geometry
+// stays whole pixels.
+function physicalGapSize(gapSize, scale) {
+    return Math.round(gapSize * normalizeUiScale(scale));
+}

@@ -771,6 +771,25 @@ function normalizeGapSize(value) {
     const n = Number(value);
     return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 10;
 }
+
+// The desktop's UI scale as a usable multiplier: Cinnamon's
+// global.ui_scale (2 on a HiDPI screen set to 200%), or 1 when it's
+// missing or nonsense. Pixel sizes this extension sets itself (window
+// geometry, sizes set from JavaScript) are physical pixels, which St
+// does NOT scale - only stylesheet sizes are scaled for it.
+function normalizeUiScale(scale) {
+    const n = Number(scale);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+// The gap in physical pixels at a UI scale. The gap-size setting is in
+// logical pixels, like every other size the user sees, but
+// move_resize_frame takes physical ones - passing it through unscaled
+// made gaps half as wide on a 2x screen. Rounded so window geometry
+// stays whole pixels.
+function physicalGapSize(gapSize, scale) {
+    return Math.round(gapSize * normalizeUiScale(scale));
+}
 // END gap-math.js
 
 // Kept byte-for-byte in sync with the standalone 5.4/tile-labels.js in
@@ -872,6 +891,35 @@ function resolveKeyElement(elements, rowKey, colKey) {
     const row = elements[rowKey];
     if (!row) return null;
     return row[colKey] || null;
+}
+
+// The grid popup's sizes that are set from JavaScript, in physical
+// pixels at a UI scale (pass normalizeUiScale(global.ui_scale), from
+// gap-math.js). The popup's stylesheet (margins, padding, fonts, the
+// grid-size buttons) is scaled by St, but these were fixed at their 1x
+// values, so on a 2x screen the panel came out half as wide as its own
+// contents and the title bar and buttons spilled out of it. Values are
+// the 1x layout's: a 220x200 table, 40px of panel around it (the
+// table's stylesheet margins), 2px cell borders and a 24px app icon.
+function gridPopupMetrics(scale) {
+    return {
+        tableWidth: 220 * scale,
+        tableHeight: 200 * scale,
+        panelBorderOffset: 40 * scale,
+        borderWidth: 2 * scale,
+        iconSize: 24 * scale,
+    };
+}
+
+// The grid table's [width, height] in physical pixels: 220x200 by
+// default, or 200 on the monitor's shorter side and 200 * ratio on its
+// longer side when the popup follows the monitor's aspect ratio.
+function gridTableSize(useAspectRatio, aspect, scale) {
+    if (!useAspectRatio)
+        return [220 * scale, 200 * scale];
+    return aspect.widthIsLonger
+        ? [200 * aspect.ratio * scale, 200 * scale]
+        : [200 * scale, 200 * aspect.ratio * scale];
 }
 // END grid-ui-math.js
 
@@ -1353,8 +1401,11 @@ class TopBar {
     _set_app(app, title) {
         this._title = app.get_name() + ' - ' + title;
         this._stlabel.text = this._title;
+        // The icon's size is logical (St scales it); the bin's, set from
+        // JavaScript, is physical - see gridPopupMetrics.
         this._icon = app.create_icon_texture(24);
-        this._iconBin.set_size(24, 24);
+        const iconSize = gridPopupMetrics(normalizeUiScale(global.ui_scale)).iconSize;
+        this._iconBin.set_size(iconSize, iconSize);
         this._iconBin.set_child(this._icon);
     }
     _destroy() {
@@ -1385,10 +1436,16 @@ const Grid_Tweener = imports.ui.tweener;
 const { Side } = imports.gi.Meta;
 let Grid = class Grid {
     constructor(app, monitor, title, cols, rows) {
-        this.tableWidth = 220;
-        this.tableHeight = 200;
-        this.panelBorderOffset = 40;
-        this.borderwidth = 2;
+        // Sizes set here (not in the stylesheet) are physical pixels, so
+        // they're scaled by hand to match the stylesheet St scales - see
+        // gridPopupMetrics. A scale change rebuilds the whole App (via
+        // monitors-changed), so reading it once here stays current.
+        this.uiScale = normalizeUiScale(global.ui_scale);
+        const metrics = gridPopupMetrics(this.uiScale);
+        this.tableWidth = metrics.tableWidth;
+        this.tableHeight = metrics.tableHeight;
+        this.panelBorderOffset = metrics.panelBorderOffset;
+        this.borderwidth = metrics.borderWidth;
         this.rowKey = -1;
         this.colKey = -1;
         this.isEntered = false;
@@ -1700,11 +1757,7 @@ let Grid = class Grid {
     }
     GetTableSize() {
         const aspect = GetMonitorAspectRatio(this.monitor);
-        if (!this.app.config.aspectRatio)
-            return [220, 200];
-        const newTableWidth = (aspect.widthIsLonger) ? 200 * aspect.ratio : 200;
-        const newTableHeight = (aspect.widthIsLonger) ? 200 : 200 * aspect.ratio;
-        return [newTableWidth, newTableHeight];
+        return gridTableSize(this.app.config.aspectRatio, aspect, this.uiScale);
     }
     UpdateSettingsButtons() {
         for (const button of this.toggleSettingButtons) {
@@ -2208,7 +2261,8 @@ const move_resize_window = (metaWindow, x, y, width, height) => {
     // Full gap at usable-area edges, half gap on internal sides so
     // neighboring tiles end up GAP_SIZE apart - see gap-math.js (whose
     // embedded copy above carries the details and the unit tests).
-    [x, y, width, height] = computeGappedRect(x, y, width, height, usableLeft, usableTop, usableWidth, usableHeight, GAP_SIZE);
+    // GAP_SIZE is in logical pixels; window geometry is physical.
+    [x, y, width, height] = computeGappedRect(x, y, width, height, usableLeft, usableTop, usableWidth, usableHeight, physicalGapSize(GAP_SIZE, global.ui_scale));
 
     // move_resize_frame alone already sets both position and size in one
     // call - a trailing move_frame(x, y) here was genuinely redundant for
