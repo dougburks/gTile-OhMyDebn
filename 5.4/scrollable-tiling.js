@@ -62,6 +62,20 @@ function normalizeScrollDuration(ms) {
     return Math.min(SCROLL_ANIMATION_MAX_MS, Math.max(0, Math.floor(n)));
 }
 
+// Whether Cinnamon itself would animate a window resize right now - the
+// rule its window manager uses for its own "Resizing and tiling windows"
+// effect: the main "Desktop and window effects" switch (which Cinnamon
+// also forces off when rendering in software), then "Window effects",
+// then "Resizing and tiling windows". Tiling animation follows it, so
+// turning effects off in System Settings turns these off too. A value
+// that couldn't be read (anything but false) counts as on, as before.
+function tilingAnimationDuration(ms, effects) {
+    const e = effects || {};
+    if (e.animationsEnabled === false || e.windowEffects === false || e.sizeChangeEffects === false)
+        return 0;
+    return normalizeScrollDuration(ms);
+}
+
 // The tiling-mode cycle driven by the "cycle tiling mode" hotkeys and
 // the CycleTilingMode DBus method. Mode-level rather than
 // scrollable-specific, but it lives in this file to share the

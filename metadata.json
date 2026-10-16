@@ -5,9 +5,9 @@
     "uuid": "gTile@OhMyDebn",
     "name": "gTile (OhMyDebn)",
     "description": "Window tiling with gaps, automatic tiling modes (rule-based, traditional, scrollable), and a D-Bus control interface. OhMyDebn's fork of gTile.",
-    "version": "3.0.1-20261012",
+    "version": "3.0.1-20261016",
     "multiversion": true,
     "url": "https://github.com/dougburks/gTile-OhMyDebn",
     "author": "dougburks",
-    "last-edited": 1791797953
+    "last-edited": 1792161767
 }

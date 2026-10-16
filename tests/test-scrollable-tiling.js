@@ -58,6 +58,21 @@ assertEq('a negative duration clamps to 0', normalizeScrollDuration(-50), 0);
 assertEq('a fractional duration floors', normalizeScrollDuration(99.9), 99);
 assertEq('an absurd duration clamps to the schema maximum (500)', normalizeScrollDuration(5000), 500);
 
+// --- tilingAnimationDuration (the duration, unless Cinnamon's effects are off) ---
+
+const ALL_ON = { animationsEnabled: true, windowEffects: true, sizeChangeEffects: true };
+assertEq('effects on: the setting\'s duration', tilingAnimationDuration(200, ALL_ON), 200);
+assertEq('effects on: still normalized', tilingAnimationDuration(5000, ALL_ON), 500);
+assertEq('main "Desktop and window effects" switch off (window effects row still on): no animation',
+    tilingAnimationDuration(200, Object.assign({}, ALL_ON, { animationsEnabled: false })), 0);
+assertEq('"Window effects" off: no animation',
+    tilingAnimationDuration(200, Object.assign({}, ALL_ON, { windowEffects: false })), 0);
+assertEq('"Resizing and tiling windows" off: no animation',
+    tilingAnimationDuration(200, Object.assign({}, ALL_ON, { sizeChangeEffects: false })), 0);
+assertEq('settings that couldn\'t be read count as on', tilingAnimationDuration(200, {}), 200);
+assertEq('no effects object at all counts as on', tilingAnimationDuration(200, undefined), 200);
+assertEq('effects on but the duration set to 0: no animation', tilingAnimationDuration(0, ALL_ON), 0);
+
 // --- nextTilingMode (the Super+L cycle) ---
 
 assertEq('forward steps to the next mode in combobox order', nextTilingMode('off', 1), 'rules');

@@ -575,6 +575,20 @@ function normalizeScrollDuration(ms) {
     return Math.min(SCROLL_ANIMATION_MAX_MS, Math.max(0, Math.floor(n)));
 }
 
+// Whether Cinnamon itself would animate a window resize right now - the
+// rule its window manager uses for its own "Resizing and tiling windows"
+// effect: the main "Desktop and window effects" switch (which Cinnamon
+// also forces off when rendering in software), then "Window effects",
+// then "Resizing and tiling windows". Tiling animation follows it, so
+// turning effects off in System Settings turns these off too. A value
+// that couldn't be read (anything but false) counts as on, as before.
+function tilingAnimationDuration(ms, effects) {
+    const e = effects || {};
+    if (e.animationsEnabled === false || e.windowEffects === false || e.sizeChangeEffects === false)
+        return 0;
+    return normalizeScrollDuration(ms);
+}
+
 // The tiling-mode cycle driven by the "cycle tiling mode" hotkeys and
 // the CycleTilingMode DBus method. Mode-level rather than
 // scrollable-specific, but it lives in this file to share the
@@ -2648,18 +2662,24 @@ const enable = () => {
     // see normalizeScrollDuration in the embedded scrollable-tiling.js
     // block above, which also handles unset/garbage values; the key
     // name predates this covering the tree modes too and is kept for
-    // settings compatibility), except that Cinnamon's system-wide
-    // desktop-effects switch being off forces 0 regardless: someone
-    // who turned off all effects (performance, motion sensitivity)
-    // must not get animations from this extension either. Deliberately
-    // NOT tied to the "Popup animation" checkbox - that governs only
-    // the overlay popup's own tweens.
+    // settings compatibility), except that whenever Cinnamon wouldn't
+    // animate a window resize itself, this doesn't either (see
+    // tilingAnimationDuration): someone who turned off effects
+    // (performance, motion sensitivity) must not get animations from
+    // this extension. animations_enabled is the main "Desktop and
+    // window effects" switch as Cinnamon applies it - the
+    // desktop-effects key alone is only the "Window effects" row under
+    // it, which stays on when the main switch is turned off.
+    // Deliberately NOT tied to the "Popup animation" checkbox - that
+    // governs only the overlay popup's own tweens.
     const tilingAnimationDurationMs = () => {
+        const effects = {};
         try {
-            if (!global.settings.get_boolean('desktop-effects'))
-                return 0;
+            effects.animationsEnabled = imports.ui.main.animations_enabled;
+            effects.windowEffects = global.settings.get_boolean('desktop-effects');
+            effects.sizeChangeEffects = global.settings.get_boolean('desktop-effects-change-size');
         } catch (e) { }
-        return normalizeScrollDuration(scrollableSettingsTarget.scrollDurationMs);
+        return tilingAnimationDuration(scrollableSettingsTarget.scrollDurationMs, effects);
     };
 
     // Visual glide for a window that automatic tiling just
